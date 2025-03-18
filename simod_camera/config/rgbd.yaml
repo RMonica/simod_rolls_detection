@@ -1,0 +1,34 @@
+/oak:
+    camera_i_nn_type: none
+    camera_i_enable_imu: false
+    camera_i_enable_ir: true
+    camera_i_enable_depth: true
+    camera_i_pipeline_type: RGBD
+    
+    stereo_i_subpixel: true
+    stereo_i_align_depth: true
+    stereo_i_resolution: '720p'
+    stereo_i_height: 720
+    stereo_i_width: 1280
+#   stereo_i_resolution: '1080P'
+#   stereo_i_height: 1080
+#   stereo_i_width: 1920
+#   stereo_i_resolution: '4K'
+#   stereo_i_height: 2160
+#   stereo_i_width: 3840
+#   stereo_i_enable_brightness_filter: true
+#   stereo_i_enable_spatial_filter: true
+#   stereo_i_median_filter: MEDIAN_ON
+
+    rgb_i_set_isp_scale: true
+    rgb_i_resolution: '1080P'
+    rgb_i_height: 720
+    rgb_i_width: 1280
+#      rgb_i_set_isp_scale: false
+#      rgb_i_resolution: '1080P'
+#      rgb_i_height: 1080
+#      rgb_i_width: 1920
+#      rgb_i_resolution: '4K'
+#      rgb_i_height: 2160
+#      rgb_i_width: 3840
+

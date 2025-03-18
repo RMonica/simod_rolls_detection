@@ -1,0 +1,11 @@
+<launch>
+  <include file="$(find depthai_ros_driver)/launch/rgbd_pcl.launch">
+    <arg name="name" value="oak" />
+    <arg name="params_file" value="$(find simod_camera)/config/rgbd.yaml" />
+  </include>
+  
+  <!--
+  <node pkg="simod_camera" exec="depth_to_cloud" name="oak_depth_to_cloud" output="screen">
+  </node>
+  -->
+</launch>

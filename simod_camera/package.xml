@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>simod_camera</name>
+  <version>0.0.0</version>
+  <description>The simod_camera package</description>
+
+  <maintainer email="rimlab@todo.todo">rimlab</maintainer>
+
+  <license>TODO</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>depthai_ros_driver</build_depend>
+  <build_export_depend>depthai_ros_driver</build_export_depend>
+  <exec_depend>depthai_ros_driver</exec_depend>
+
+  <export>
+  </export>
+</package>
