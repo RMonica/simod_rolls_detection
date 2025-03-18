@@ -1,0 +1,46 @@
+<launch>
+  <arg name="image_id" default="0"/>
+  <arg name="folder" default="oak_d_pallet_detect"/>
+
+  <node pkg="simod_rolls_detection" type="pallet_detection_node" name="pallet_detection_node" output="screen">
+   
+    <param name="rgb_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/image$(arg image_id).png" />
+    <param name="depth_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/depth$(arg image_id).png" />
+    <!--<param name="camera_info_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/camerainfo$(arg image_id).serialized" />-->
+    <param name="camera_info_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/camera_info.txt" />
+    <param name="expected_pallet_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/expected_pallet_$(arg image_id).txt" />
+    <param name="camera_pose_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/pose$(arg image_id).txt" />
+    <param name="initial_guess_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/initial_guess_$(arg image_id).txt" />
+
+    <param name="depth_hough_threshold" type="int" value="200" />
+    <param name="depth_hough_min_length" type="double" value="100" />
+    <param name="depth_hough_max_gap" type="double" value="50" />
+
+    <param name="min_plane_camera_distance" type="double" value="0.5" />
+    <param name="vertical_line_angle_tolerance" type="double" value="$(eval 3.14 / 10)" />
+
+    <param name="ransac_plane_angle_tolerance" type="double" value="$(eval 5.0 / 180.0 * 3.14)" />
+    <param name="ransac_plane_distance_tolerance" type="double" value="0.025" />
+    <param name="ransac_plane_inliers_tolerance" type="double" value="0.08" />
+
+    <param name="plane_camera_max_angle" type="double" value="$(eval 60.0 / 180.0 * 3.14)" />
+
+    <param name="depth_image_max_discontinuity_th" type="double" value="0.1" />
+    <param name="depth_image_max_vertical_angle" type="double" value="$(eval 80 / 180.0 * 3.14)" />
+    <param name="depth_image_normal_window" type="int" value="4" />
+    <param name="depth_image_closing_window" type="int" value="10" />
+
+    <param name="min_cluster_points_at_1m" type="double" value="100000" />
+    <param name="min_cluster_points" type="int" value="40000" />
+
+    <param name="pillars_merge_threshold" type="double" value="0.05" />
+
+    <param name="planes_similarity_max_angle" type="double" value="$(eval 10.0 / 180 * 3.14)" />
+    <param name="planes_similarity_max_distance" type="double" value="0.1" />
+    <param name="points_similarity_max_distance" type="double" value="0.1" />
+
+    <param name="plane_ransac_iterations" type="int" value="2000" />
+    <param name="plane_ransac_max_error" type="double" value="0.1" />
+
+  </node>
+</launch>

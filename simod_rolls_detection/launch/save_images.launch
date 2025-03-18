@@ -1,0 +1,23 @@
+<launch>
+  <arg name="image_id" default="0"/>
+  <arg name="folder" default="oak_d_pallet_detect"/>
+
+  <include file="$(find simod_camera)/launch/oak_d_pro.launch"/>
+
+  <node pkg="simod_rolls_detection" type="save_images" name="save_images" output="screen">
+   
+    <param name="save_color" type="bool" value="true" />
+    <param name="save_depth" type="bool" value="true" />
+    <param name="save_pose" type="bool" value="true" />
+    <param name="save_camera_info" type="bool" value="true" />
+
+    <param name="save_folder_name" type="string" value="$(find simod_rolls_detection)" />
+
+    <param name="depth_image_topic" type="string" value="/oak/stereo/image_raw" />
+    <param name="color_image_topic" type="string" value="/oak/rgb/image_raw" />
+    <param name="camera_info_topic" type="string" value="/oak/stereo/camera_info" />
+
+    <param name="tf_camera_frame" type="string" value="camera" />
+    <param name="tf_base_frame" type="string" value="world" />
+  </node>
+</launch>
