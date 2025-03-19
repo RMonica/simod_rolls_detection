@@ -1,0 +1,16 @@
+# Goal
+geometry_msgs/Pose camera_pose
+string pallet_description_filename
+float64 floor_z
+
+geometry_msgs/Vector3 initial_guess_center
+geometry_msgs/Vector3 initial_guess_size
+float64 initial_guess_rotation
+---
+# Result
+bool success
+
+geometry_msgs/Pose pallet_pose
+geometry_msgs/Pose[] box_poses
+---
+# Feedback

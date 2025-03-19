@@ -8,9 +8,13 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   tf2_ros
   visualization_msgs
+  geometry_msgs
   cv_bridge
   tf2_eigen
   eigen_conversions
+  actionlib
+  actionlib_msgs
+  message_generation
 )
 
 find_package(PCL REQUIRED)
@@ -20,6 +24,15 @@ find_package(Ceres REQUIRED)
 ###################################
 ## catkin specific configuration ##
 ###################################
+add_action_files(
+  DIRECTORY action
+  FILES DetectPallet.action
+)
+
+generate_messages(
+  DEPENDENCIES actionlib_msgs std_msgs geometry_msgs
+)
+
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES simod_rolls_detection
@@ -51,6 +64,17 @@ target_link_libraries(pallet_detection_node
   ${OpenCV_LIBRARIES}
   ${CERES_LIBRARIES}
   pallet_detection_lib
+)
+
+add_executable(pallet_detection_test 
+               src/pallet_detection_test.cpp
+               )
+
+add_dependencies(pallet_detection_test ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+target_link_libraries(pallet_detection_test
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
 )
 
 add_executable(save_images 

@@ -4,13 +4,10 @@
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <cv_bridge/cv_bridge.h>
-#include <message_filters/subscriber.h>
-#include <message_filters/time_synchronizer.h>
-#include <message_filters/sync_policies/approximate_time.h>
 #include <visualization_msgs/MarkerArray.h>
-#include <tf2_ros/transform_broadcaster.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <eigen_conversions/eigen_msg.h>
+#include <actionlib/server/simple_action_server.h>
 
 // OpenCV
 #include <opencv2/opencv.hpp>
@@ -22,20 +19,22 @@
 #include <set>
 #include <cmath>
 #include <map>
+#include <mutex>
 
 // PCL
 #include <pcl/common/colors.h>
 #include <pcl/point_cloud.h>
 
+#include <simod_rolls_detection/DetectPalletAction.h>
+
 #include <pallet_detection.h>
 
 typedef ros::NodeHandle Node;
-typedef sensor_msgs::PointCloud2 PointCloud2Msg;
 typedef sensor_msgs::Image ImageMsg;
 typedef sensor_msgs::CameraInfo CameraInfoMsg;
+typedef sensor_msgs::PointCloud2 PointCloud2Msg;
 typedef visualization_msgs::Marker MarkerMsg;
 typedef visualization_msgs::MarkerArray MarkerArrayMsg;
-typedef geometry_msgs::TransformStamped TransformStampedMsg;
 
 class PalletDetectionNode
 {
@@ -71,6 +70,8 @@ class PalletDetectionNode
 
   typedef std::vector<visualization_msgs::Marker> MarkerVector;
 
+  typedef actionlib::SimpleActionServer<simod_rolls_detection::DetectPalletAction> ActionServer;
+
   template <typename T> static T SQR(const T & t) {return t * t; }
 
   Eigen::Vector3f StrToVector3f(const std::string & str)
@@ -87,6 +88,28 @@ class PalletDetectionNode
   {
     PalletDetection::Config config;
 
+    m_nodeptr->param<std::string>("depth_image_topic", m_depth_image_topic, "camera_info_topic");
+    m_nodeptr->param<std::string>("rgb_image_topic", m_rgb_image_topic, "rgb_image_topic");
+    m_nodeptr->param<std::string>("camera_info_topic", m_camera_info_topic, "camera_info_topic");
+
+    m_nodeptr->param<std::string>("detect_pallet_action", m_detect_pallet_action, "/detect_pallet");
+    m_as.reset(new ActionServer(*nodeptr, m_detect_pallet_action,
+      boost::function<void(const simod_rolls_detection::DetectPalletGoalConstPtr &)>(
+        [this](const simod_rolls_detection::DetectPalletGoalConstPtr & goal){this->Run(goal); }),
+      false));
+
+    ROS_INFO("pallet_detection_node: subscribing to depth topic %s", m_depth_image_topic.c_str());
+    ROS_INFO("pallet_detection_node: subscribing to color topic %s", m_rgb_image_topic.c_str());
+    ROS_INFO("pallet_detection_node: subscribing to camera_info topic %s", m_camera_info_topic.c_str());
+    m_depth_image_sub = m_nodeptr->subscribe<sensor_msgs::Image>(m_depth_image_topic, 1,
+      boost::function<void(const sensor_msgs::Image &)>([this](const sensor_msgs::Image & msg){this->DepthImageCallback(msg); }));
+    m_rgb_image_sub = m_nodeptr->subscribe<sensor_msgs::Image>(m_rgb_image_topic, 1,
+      boost::function<void(const sensor_msgs::Image &)>([this](const sensor_msgs::Image & msg){this->RgbImageCallback(msg); }));
+    m_camera_info_sub = m_nodeptr->subscribe<sensor_msgs::CameraInfo>(m_camera_info_topic, 1,
+      boost::function<void(const sensor_msgs::CameraInfo &)>([this](const sensor_msgs::CameraInfo & msg){
+      this->CameraInfoCallback(msg);
+    }));
+
     m_point_cloud_pub = nodeptr->advertise<PointCloud2Msg>("point_cloud", 1);
     m_input_point_cloud_pub = nodeptr->advertise<PointCloud2Msg>("input_point_cloud", 1);
     m_valid_points_cloud_pub = nodeptr->advertise<PointCloud2Msg>("valid_points_cloud", 1);
@@ -94,19 +117,9 @@ class PalletDetectionNode
     m_edge_image_pub = nodeptr->advertise<ImageMsg>("edge_image", 1);
     m_plane_image_pub = nodeptr->advertise<ImageMsg>("plane_image", 1);
 
-    m_nodeptr->param<std::string>("world_frame_id", m_world_frame_id, "map");
-    m_tf_broadcaster = std::make_shared<tf2_ros::TransformBroadcaster>();
-
     m_markers_pub = nodeptr->advertise<MarkerArrayMsg>("markers", 1);
 
-    m_timer = m_nodeptr->createTimer(ros::Duration(0.0), [this](const ros::TimerEvent &){this->Run(); }, true);
-
-    m_nodeptr->param<std::string>("rgb_filename", m_image_file_name, "");
-    m_nodeptr->param<std::string>("depth_filename", m_depth_file_name, "");
-    m_nodeptr->param<std::string>("camera_info_filename", m_camera_info_file_name, "");
-    m_nodeptr->param<std::string>("expected_pallet_filename", m_expected_pallet_file_name, "");
-    m_nodeptr->param<std::string>("camera_pose_filename", m_camera_pose_file_name, "");
-    m_nodeptr->param<std::string>("initial_guess_filename", m_initial_guess_file_name, "");
+    m_nodeptr->param<std::string>("world_frame_id", m_world_frame_id, "map");
 
     m_nodeptr->param<int>("depth_hough_threshold", config.depth_hough_threshold, 50);
     m_nodeptr->param<int>("depth_hough_min_length", config.depth_hough_min_length, 100);
@@ -122,30 +135,30 @@ class PalletDetectionNode
 
     m_nodeptr->param<double>("plane_camera_max_angle", config.plane_camera_max_angle, 70.0 / 180.0 * M_PI);
 
-    config.plane_edge_discontinuity_dist_th = m_nodeptr->param<float>("plane_edge_discontinuity_dist_th", 0.05f);
-    config.plane_edge_discontinuity_angle_th = m_nodeptr->param<float>("plane_edge_discontinuity_angle_th", 20.0f * M_PI / 180.0f);
+    m_nodeptr->param<float>("plane_edge_discontinuity_dist_th", config.plane_edge_discontinuity_dist_th, 0.05f);
+    m_nodeptr->param<float>("plane_edge_discontinuity_angle_th", config.plane_edge_discontinuity_angle_th, 20.0f * M_PI / 180.0f);
 
-    config.depth_image_max_discontinuity_th = m_nodeptr->param<double>("depth_image_max_discontinuity_th", 0.05);
-    config.depth_image_max_vertical_angle = m_nodeptr->param<double>("depth_image_max_vertical_angle", 20.0 / 180.0 * M_PI);
-    config.depth_image_normal_window = m_nodeptr->param<int>("depth_image_normal_window", 2);
-    config.depth_image_closing_window = m_nodeptr->param<int>("depth_image_closing_window", 15);
+    m_nodeptr->param<double>("depth_image_max_discontinuity_th", config.depth_image_max_discontinuity_th, 0.05);
+    m_nodeptr->param<double>("depth_image_max_vertical_angle", config.depth_image_max_vertical_angle, 20.0 / 180.0 * M_PI);
+    m_nodeptr->param<int>("depth_image_normal_window", config.depth_image_normal_window, 2);
+    m_nodeptr->param<int>("depth_image_closing_window", config.depth_image_closing_window, 15);
 
-    config.min_cluster_points_at_1m = m_nodeptr->param<double>("min_cluster_points_at_1m", 50000);
-    config.min_cluster_points = m_nodeptr->param<int>("min_cluster_points", 10000);
+    m_nodeptr->param<double>("min_cluster_points_at_1m", config.min_cluster_points_at_1m, 50000);
+    m_nodeptr->param<int>("min_cluster_points", config.min_cluster_points, 10000);
 
-    config.pillars_merge_threshold = m_nodeptr->param<double>("pillars_merge_threshold", 0.025);
+    m_nodeptr->param<double>("pillars_merge_threshold", config.pillars_merge_threshold, 0.025);
 
-    config.planes_similarity_max_angle = m_nodeptr->param<double>("planes_similarity_max_angle", 20.0f * M_PI / 180.0f);
-    config.planes_similarity_max_distance = m_nodeptr->param<double>("planes_similarity_max_distance", 0.1f);
-    config.points_similarity_max_distance = m_nodeptr->param<double>("points_similarity_max_distance", 0.1f);
+    m_nodeptr->param<double>("planes_similarity_max_angle", config.planes_similarity_max_angle, 20.0f * M_PI / 180.0f);
+    m_nodeptr->param<double>("planes_similarity_max_distance", config.planes_similarity_max_distance, 0.1f);
+    m_nodeptr->param<double>("points_similarity_max_distance", config.points_similarity_max_distance, 0.1f);
 
-    config.max_pose_correction_distance = m_nodeptr->param<double>("max_pose_correction_distance", 2.0f);
-    config.max_pose_correction_angle = m_nodeptr->param<double>("max_pose_correction_angle", M_PI / 2.0f);
+    m_nodeptr->param<double>("max_pose_correction_distance", config.max_pose_correction_distance, 2.0f);
+    m_nodeptr->param<double>("max_pose_correction_angle", config.max_pose_correction_angle, M_PI / 2.0f);
 
-    config.plane_ransac_iterations = m_nodeptr->param<int>("plane_ransac_iterations", 2000);
-    config.plane_ransac_max_error = m_nodeptr->param<double>("plane_ransac_max_error", 0.1);
+    m_nodeptr->param<int>("plane_ransac_iterations", config.plane_ransac_iterations, 2000);
+    m_nodeptr->param<double>("plane_ransac_max_error", config.plane_ransac_max_error, 0.1);
 
-    config.random_seed = m_nodeptr->param<int>("random_seed", std::random_device()());
+    m_nodeptr->param<int>("random_seed", config.random_seed, std::random_device()());
 
     m_pallet_detection.reset(new PalletDetection(config));
 
@@ -160,134 +173,137 @@ class PalletDetectionNode
     m_pallet_detection->SetPublishCloudFunction([this](const PointXYZRGBCloud & cloud, const std::string & name) {
       this->PublishCloud(cloud, name);
     });
+
+    m_as->start();
   }
 
-  void Load(cv::Mat & rgb_image, cv::Mat & depth_image, PalletDetection::CameraInfo & camera_info,
-            Eigen::Affine3f & camera_pose, PalletDetection::BoundingBox & initial_guess, float & floor_z)
+  void Run(const simod_rolls_detection::DetectPalletGoalConstPtr & goalptr)
   {
-    {
-      ROS_INFO("loading camera_info file %s", m_camera_info_file_name.c_str());
-      camera_info = LoadCameraInfo(m_camera_info_file_name);
-    }
+    const simod_rolls_detection::DetectPalletGoal & goal = *goalptr;
 
-    rgb_image = cv::imread(m_image_file_name);
-    depth_image = cv::imread(m_depth_file_name, cv::IMREAD_ANYDEPTH);
-
-    if (!rgb_image.data)
+    cv::Mat rgb_image;
+    cv::Mat depth_image;
+    std::shared_ptr<PalletDetection::CameraInfo> camera_info;
+    ROS_INFO("pallet_detection_node: action start.");
     {
-      ROS_FATAL("could not load rgb image: %s", m_image_file_name.c_str());
-      std::exit(1);
-    }
-
-    if (!depth_image.data)
-    {
-      ROS_FATAL("could not load depth image: %s", m_depth_file_name.c_str());
-      std::exit(2);
-    }
-
-    if (!MatrixFromFile(m_camera_pose_file_name, camera_pose))
-    {
-      ROS_FATAL("could not load camera_pose: %s", m_camera_pose_file_name.c_str());
-      std::exit(3);
-    }
-
-    {
-      std::ifstream ifile(m_initial_guess_file_name);
-      if (!ifile)
+      ros::Rate wait_rate(100);
+      std::unique_lock<std::mutex> lock(m_mutex);
+      m_last_rgb_image = cv::Mat();
+      m_last_depth_image = cv::Mat();
+      m_last_camera_info.reset();
+      while (m_last_rgb_image.empty() || m_last_depth_image.empty() || !m_last_camera_info)
       {
-        ROS_FATAL("could not load initial_guess: %s", m_initial_guess_file_name.c_str());
-        std::exit(4);
+        lock.unlock();
+        ROS_INFO_THROTTLE(2.0, "pallet_detection_node: waiting for images...");
+        wait_rate.sleep();
+        lock.lock();
+
+        if (!ros::ok())
+          return;
       }
-      initial_guess = LoadInitialGuess(ifile, floor_z);
+
+
+      rgb_image = m_last_rgb_image;
+      depth_image = m_last_depth_image;
+      camera_info = m_last_camera_info;
+    } // lock released here
+    ROS_INFO("pallet_detection_node: received images.");
+
+    Eigen::Affine3d camera_pose;
+    tf::poseMsgToEigen(goal.camera_pose, camera_pose);
+
+    PalletDetection::BoundingBox initial_guess;
+    initial_guess.center.x() = goal.initial_guess_center.x;
+    initial_guess.center.y() = goal.initial_guess_center.y;
+    initial_guess.center.z() = goal.initial_guess_center.z;
+    initial_guess.size.x() = goal.initial_guess_size.x;
+    initial_guess.size.y() = goal.initial_guess_size.y;
+    initial_guess.size.z() = goal.initial_guess_size.z;
+    initial_guess.rotation = goal.initial_guess_rotation;
+
+    const float floor_z = goal.floor_z;
+    const std::string expected_pallet_file_name = goal.pallet_description_filename;
+
+    PalletDetection::DetectionResult detection_result =
+      m_pallet_detection->Detect(rgb_image,
+                                 depth_image,
+                                 *camera_info,
+                                 camera_pose.cast<float>(),
+                                 floor_z,
+                                 initial_guess,
+                                 expected_pallet_file_name
+                                 );
+
+    ROS_INFO_STREAM("success: " << (detection_result.success ? "TRUE" : "FALSE"));
+    ROS_INFO_STREAM("final pose: " << detection_result.pose.transpose());
+
+    simod_rolls_detection::DetectPalletResult result;
+    result.success = detection_result.success;
+    {
+      Eigen::Affine3d pose = Eigen::Affine3d::Identity();
+      pose.translation().head<2>() = detection_result.pose.head<2>();
+      pose.linear() = Eigen::AngleAxisd(detection_result.pose.z(), Eigen::Vector3d::UnitZ()).matrix();
+      tf::poseEigenToMsg(pose, result.pallet_pose);
+    }
+    for (uint64 box_i = 0; box_i < detection_result.boxes.size(); box_i++)
+    {
+      geometry_msgs::Pose box_pose;
+      tf::poseEigenToMsg(detection_result.boxes[box_i], box_pose);
+      result.box_poses.push_back(box_pose);
+    }
+
+    ROS_INFO("pallet_detection_node: action end.");
+    m_as->setSucceeded(result);
+  }
+
+  void DepthImageCallback(const sensor_msgs::Image & msg)
+  {
+    std::unique_lock<std::mutex> lock(m_mutex);
+
+    try
+    {
+      cv_bridge::CvImageConstPtr cv_ptr = cv_bridge::toCvCopy(msg, "16UC1");
+      m_last_depth_image = cv_ptr->image;
+    }
+    catch (const cv_bridge::Exception & e)
+    {
+      ROS_ERROR("DepthImageCallback: Could not convert from '%s' to '16UC1'.", msg.encoding.c_str());
+      return;
     }
   }
 
-  PalletDetection::CameraInfo LoadCameraInfo(const std::string filename)
+  void RgbImageCallback(const sensor_msgs::Image & msg)
   {
-    PalletDetection::CameraInfo result;
+    std::unique_lock<std::mutex> lock(m_mutex);
 
-    std::ifstream ifile(filename);
-    if (!ifile)
+    try
     {
-      ROS_FATAL("could not find camera_info file: %s", filename.c_str());
-      std::exit(1);
+      cv_bridge::CvImageConstPtr cv_ptr = cv_bridge::toCvCopy(msg, "bgr8");
+      m_last_rgb_image = cv_ptr->image;
     }
-
-    std::string line;
-    while (std::getline(ifile, line))
+    catch (const cv_bridge::Exception & e)
     {
-      std::istringstream istr(line);
-      std::string field;
-      istr >> field;
-      if (field == "fx")
-        istr >> result.fx;
-      else if (field == "fy")
-        istr >> result.fy;
-      else if (field == "cx")
-        istr >> result.cx;
-      else if (field == "cy")
-        istr >> result.cy;
-      else
-      {
-        ROS_FATAL("invalid line in camera info file: %s", line.c_str());
-        std::exit(1);
-      }
-
-      if (!istr)
-      {
-        ROS_FATAL("could not parse line in camera info file: %s", line.c_str());
-        std::exit(1);
-      }
+      ROS_ERROR("RgbImageCallback: Could not convert from '%s' to 'bgr8'.", msg.encoding.c_str());
+      return;
     }
-
-    return result;
   }
 
-
-  PalletDetection::BoundingBox LoadInitialGuess(std::istream & istr, float & floor_z) const
+  void CameraInfoCallback(const sensor_msgs::CameraInfo & msg)
   {
-    PalletDetection::BoundingBox result;
-    floor_z = 0.0f;
+    std::unique_lock<std::mutex> lock(m_mutex);
 
-    std::string line;
-    while (std::getline(istr, line))
-    {
-      if (line.empty())
-        continue; // skip empty lines
+    const float fx = msg.K[0];
+    const float fy = msg.K[4];
+    const float cx = msg.K[2];
+    const float cy = msg.K[5];
 
-      std::istringstream iss(line);
-      std::string type;
-      iss >> type;
-      if (type == "center")
-      {
-        iss >> result.center.x() >> result.center.y() >> result.center.z();
-      }
-      else if (type == "size")
-      {
-        iss >> result.size.x() >> result.size.y() >> result.size.z();
-      }
-      else if (type == "rotation")
-      {
-        iss >> result.rotation;
-      }
-      else if (type == "floor")
-      {
-        iss >> floor_z;
-      }
-      else
-      {
-        ROS_ERROR("LoadExpectedPallet: Unknown type: %s", type.c_str());
-        continue;
-      }
+    std::shared_ptr<PalletDetection::CameraInfo> ci(new PalletDetection::CameraInfo);
+    ci->fx = fx;
+    ci->fy = fy;
+    ci->cx = cx;
+    ci->cy = cy;
 
-      if (!iss)
-      {
-        ROS_ERROR("Unable to parse line: %s", line.c_str());
-        continue;
-      }
-    }
-
-    return result;
+    m_last_camera_info = ci;
   }
 
   MarkerVector PalletToVisualizationMarkers(const ExpectedPallet & pallet,
@@ -418,23 +434,6 @@ class PalletDetectionNode
     return result;
   }
 
-  bool MatrixFromFile(const std::string & filename, Eigen::Affine3f & matrix)
-  {
-    std::ifstream file(filename);
-
-    for (uint64 i = 0; i < 3; ++i)
-      for (uint64 j = 0; j < 4; ++j)
-      {
-        float v;
-        file >> v;
-        matrix.matrix()(i, j) = v;
-      }
-
-    if (!file)
-      return false;
-    return true;
-  }
-
   void PublishImage(const cv::Mat &image, const std::string &encoding, const std::string & name)
   {
     if (name == "cluster_image")
@@ -512,47 +511,6 @@ class PalletDetectionNode
     }
   }
 
-  void Run()
-  {
-    cv::Mat rgb_image;
-    cv::Mat depth_image;
-    Eigen::Affine3f camera_pose;
-
-    ROS_INFO("loading");
-
-    PalletDetection::BoundingBox initial_guess;
-    PalletDetection::CameraInfo camera_info;
-    float floor_z;
-    Load(rgb_image, depth_image, camera_info, camera_pose, initial_guess, floor_z);
-
-    PalletDetection::DetectionResult detection_result =
-      m_pallet_detection->Detect(rgb_image,
-                                 depth_image,
-                                 camera_info,
-                                 camera_pose,
-                                 floor_z,
-                                 initial_guess,
-                                 m_expected_pallet_file_name);
-
-    ROS_INFO_STREAM("success: " << (detection_result.success ? "TRUE" : "FALSE"));
-    ROS_INFO_STREAM("final pose: " << detection_result.pose.transpose());
-
-    ROS_INFO_STREAM("publishing " << detection_result.boxes.size() << " boxes.");
-    for (uint64 box_i = 0; box_i < detection_result.boxes.size(); box_i++)
-    {
-      const Eigen::Affine3d box = detection_result.boxes[box_i];
-
-      TransformStampedMsg t;
-      tf::transformEigenToMsg(box, t.transform);
-
-      t.header.stamp = ros::Time::now();
-      t.header.frame_id = m_world_frame_id;
-      t.child_frame_id = "box_" + std::to_string(box_i);
-
-      m_tf_broadcaster->sendTransform(t);
-    }
-  }
-
   void PublishCloud(const pcl::PointCloud<pcl::PointXYZRGB> & cloud, ros::Publisher & pub)
   {
     PointCloud2Msg output;
@@ -582,17 +540,25 @@ class PalletDetectionNode
 
   ros::Publisher m_markers_pub;
 
+  ros::Subscriber m_rgb_image_sub;
+  ros::Subscriber m_depth_image_sub;
+  ros::Subscriber m_camera_info_sub;
+
   std::string m_world_frame_id;
-  std::shared_ptr<tf2_ros::TransformBroadcaster> m_tf_broadcaster;
+
+  std::shared_ptr<ActionServer> m_as;
+
+  std::string m_depth_image_topic;
+  std::string m_rgb_image_topic;
+  std::string m_camera_info_topic;
+  std::string m_detect_pallet_action;
+
+  cv::Mat m_last_rgb_image;
+  cv::Mat m_last_depth_image;
+  std::shared_ptr<PalletDetection::CameraInfo> m_last_camera_info;
 
   ros::Timer m_timer;
-
-  std::string m_image_file_name;
-  std::string m_depth_file_name;
-  std::string m_camera_info_file_name;
-  std::string m_expected_pallet_file_name;
-  std::string m_camera_pose_file_name;
-  std::string m_initial_guess_file_name;
+  std::mutex m_mutex;
 
   PalletDetection::Ptr m_pallet_detection;
 };

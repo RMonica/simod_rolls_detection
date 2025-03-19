@@ -16,6 +16,10 @@
   <depend>cv_bridge</depend>
   <depend>tf2_eigen</depend>
   <depend>eigen_conversions</depend>
+  <depend>actionlib</depend>
+  <depend>actionlib_msgs</depend>
+  <depend>message_generation</depend>
+  <depend>geometry_msgs</depend>
 
   <export>
 
