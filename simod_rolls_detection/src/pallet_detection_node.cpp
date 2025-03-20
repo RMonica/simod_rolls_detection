@@ -242,6 +242,7 @@ class PalletDetectionNode
     {
       Eigen::Affine3d pose = Eigen::Affine3d::Identity();
       pose.translation().head<2>() = detection_result.pose.head<2>();
+      pose.translation().z() = floor_z;
       pose.linear() = Eigen::AngleAxisd(detection_result.pose.z(), Eigen::Vector3d::UnitZ()).matrix();
       tf::poseEigenToMsg(pose, result.pallet_pose);
     }
