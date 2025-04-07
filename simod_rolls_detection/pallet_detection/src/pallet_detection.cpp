@@ -51,6 +51,8 @@ template <typename ET> inline
 
 PalletDetection::PalletDetection(const Config & config)
 {
+  m_config = config;
+
   m_depth_hough_threshold = config.depth_hough_threshold;
   m_depth_hough_min_length = config.depth_hough_min_length;
   m_depth_hough_max_gap = config.depth_hough_max_gap;
@@ -146,6 +148,54 @@ PalletDetection::ExpectedPallet PalletDetection::LoadExpectedPallet(std::istream
     {
       new_element.type = ExpectedElementType::PILLAR;
       iss >> new_element.pillar.x() >> new_element.pillar.y() >> new_element.pillar.z() >> new_element.pillar.w();
+
+      if (!iss)
+      {
+        m_log(3, "Unable to parse line: " + line);
+        continue;
+      }
+
+      std::string cmd;
+      while (iss >> cmd)
+      {
+        if (cmd == "left" || cmd == "right")
+        {
+          std::string plane_name;
+          if (iss >> plane_name)
+          {
+            uint64 plane_id = uint64(-1);
+            for (uint64 i = 0; i < result.size(); i++)
+              if (result[i].name == plane_name)
+                plane_id = i;
+
+            if ((result.size() > plane_id) && (result[plane_id].type == ExpectedElementType::PLANE))
+            {
+              if (cmd == "left")
+                new_element.pillar_left_plane_id = plane_id;
+              else
+                new_element.pillar_right_plane_id = plane_id;
+            }
+            else
+              m_log(3, "Plane " + plane_name + " does not exist at line '" + line + "'");
+          }
+          else
+          {
+            m_log(3, "Expected plane id after '" + cmd + "' at line '" + line + "'");
+          }
+        }
+        else if (cmd == "name")
+        {
+          std::string name;
+          if (iss >> name)
+            new_element.name = name;
+          else
+            m_log(3, "Expected name after '" + cmd + "' at line '" + line + "'");
+        }
+        else
+        {
+          m_log(3, "Invalid subcommand '" + cmd + "' at line '" + line + "'");
+        }
+      }
     }
     else if (type == "plane")
     {
@@ -156,12 +206,58 @@ PalletDetection::ExpectedPallet PalletDetection::LoadExpectedPallet(std::istream
       const Eigen::Vector4d plane = new_element.plane;
       new_element.plane_point = -plane.head<3>() * plane.w(); // get any point on plane
       new_element.plane_point.z() = (new_element.plane_z.x() + new_element.plane_z.y()) / 2.0; // override z with input z
+
+      if (!iss)
+      {
+        m_log(3, "Unable to parse line: " + line);
+        continue;
+      }
+
+      std::string cmd;
+      while (iss >> cmd)
+      {
+        if (cmd == "name")
+        {
+          std::string name;
+          if (iss >> name)
+            new_element.name = name;
+          else
+            m_log(3, "Expected name after '" + cmd + "' at line '" + line + "'");
+        }
+        else
+        {
+          m_log(3, "Invalid subcommand '" + cmd + "' at line '" + line + "'");
+        }
+      }
     }
     else if (type == "box")
     {
       new_element.type = ExpectedElementType::BOX;
       iss >> new_element.box_size.x() >> new_element.box_size.y() >> new_element.box_size.z();
       iss >> new_element.box.x() >> new_element.box.y() >> new_element.box.z() >> new_element.box.w();
+
+      if (!iss)
+      {
+        m_log(3, "Unable to parse line: " + line);
+        continue;
+      }
+
+      std::string cmd;
+      while (iss >> cmd)
+      {
+        if (cmd == "name")
+        {
+          std::string name;
+          if (iss >> name)
+            new_element.name = name;
+          else
+            m_log(3, "Expected name after '" + cmd + "' at line '" + line + "'");
+        }
+        else
+        {
+          m_log(3, "Invalid subcommand '" + cmd + "' at line '" + line + "'");
+        }
+      }
     }
     else if (type == "guess")
     {
@@ -171,12 +267,6 @@ PalletDetection::ExpectedPallet PalletDetection::LoadExpectedPallet(std::istream
     else
     {
       m_log(3, "LoadExpectedPallet: Unknown type: " + type);
-      continue;
-    }
-
-    if (!iss)
-    {
-      m_log(3, "Unable to parse line: " + line);
       continue;
     }
 
@@ -415,6 +505,7 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
   cv::Mat depth_image = depth_image_in;
   depth_image = DepthToFloat(depth_image);
   depth_image = FilterDepthImage(depth_image, m_depth_image_max_discontinuity_th);
+  m_publish_image(depth_image, "32FC1", "depth_image");
 
   const uint64 width = rgb_image.cols;
   const uint64 height = rgb_image.rows;
@@ -448,12 +539,18 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
                       m_depth_hough_min_length, m_depth_hough_max_gap, m_vertical_line_angle_tolerance,
                       m_pillars_merge_threshold, m_ransac_plane_angle_tolerance,
                       m_ransac_plane_distance_tolerance, m_ransac_plane_inliers_tolerance,
-                      m_plane_edge_discontinuity_angle_th, m_plane_edge_discontinuity_dist_th);
+                      m_plane_edge_discontinuity_angle_th, m_plane_edge_discontinuity_dist_th,
+                      m_config.th_scan_distance_window,
+                      m_config.th_scan_counter_threshold,
+                      m_config.th_scan_threshold_enter,
+                      m_config.th_scan_threshold_exit,
+                      m_config.correlation_templates,
+                      m_config.correlation_multiresolution_count,
+                      m_config.correlation_multiresolution_step,
+                      m_config.correlation_rescale,
+                      m_config.correlation_threshold);
   ExpectedPallet real_pallet;
   pfi.Run(rgb_image, depth_image, z_up_cloud, valid_indices_ptr, camera_pose, camera_info, real_pallet);
-
-  const cv::Mat debug_edge_image = pfi.GetLastEdgeImage();
-  const cv::Mat cluster_image = pfi.GetLastClusterImage();
 
   // Expected pallet RANSAC
   ExpectedPallet loaded_pallet;
@@ -461,7 +558,8 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
   ExpectedPallet estimated_refined_pallet;
 
   {
-    PalletRansac pallet_ransac(m_plane_ransac_max_error,
+    PalletRansac pallet_ransac(m_log,
+                               m_plane_ransac_max_error,
                                m_plane_ransac_iterations,
                                m_max_pose_correction_distance,
                                m_max_pose_correction_angle,
@@ -516,6 +614,7 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
 
     result.pose = refined_pose;
     result.success = consensus.size() >= 2; // need at least two elements to estimate pose
+    result.consensus = consensus.size();
 
     loaded_pallet = pallet_ransac.TransformPallet(expected_pallet, initial_guess);
     estimated_refined_pallet = pallet_ransac.TransformPallet(expected_pallet, refined_pose);
@@ -546,7 +645,21 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
 
   // visualization
   {
-    m_publish_image(debug_edge_image, "rgb8", "edge_image");
+    const cv::Mat debug_edge_image = pfi.GetLastEdgeImage();
+    const cv::Mat cluster_image = pfi.GetLastClusterImage();
+    const cv::Mat correlation_image = pfi.GetLastCorrelationImage();
+    const cv::Mat bool_correlation_image = pfi.GetLastBoolCorrelationImage().clone();
+
+
+    if (!debug_edge_image.empty())
+      m_publish_image(debug_edge_image, "rgb8", "edge_image");
+    if (!correlation_image.empty())
+      m_publish_image(correlation_image, "mono8", "correlation_image");
+    if (!bool_correlation_image.empty())
+    {
+      cv::Mat m = bool_correlation_image * 255;
+      m_publish_image(m, "mono8", "bool_correlation_image");
+    }
 
     // renumbering
     std::vector<uint64> pixel_counter;

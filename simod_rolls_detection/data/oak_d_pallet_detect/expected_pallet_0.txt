@@ -1,11 +1,12 @@
+guess 0.5 0 0
 # plane: a b c d z_min z_max
 # pillar: x y z_min z_max
-plane -1    0    0      0    0  0.2
-pillar 0    0.4  0.0    0.2
-pillar 0    -0.4 0.0    0.2
-plane -1    0    0      0.3  0.2 0.6
-pillar 0.3  0.4  0.2    0.6
-pillar 0.3  -0.4 0.2    0.6
+plane -1    0    0      0    0  0.2 name front_plane
+pillar 0    0.425  0.0    0.2 left front_plane
+pillar 0    -0.425 0.0    0.2 right front_plane
+plane -1    0    0      0.35  0.2 0.6 name back_plane
+pillar 0.35  0.425  0.2    0.6 left back_plane
+pillar 0.35  -0.425 0.2    0.6 right back_plane
 # box: size_x size_y size_z x    y    z     rotation_z
 box    0.3    0.85   0.2    0.15 0.0   0.1  0
 box    0.3    0.85   0.2    0.45 0.0   0.3  0

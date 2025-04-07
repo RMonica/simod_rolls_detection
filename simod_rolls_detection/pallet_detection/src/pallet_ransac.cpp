@@ -9,7 +9,8 @@ typedef PalletRansac::ExpectedPallet ExpectedPallet;
   #define NAN (std::numeric_limits<double>::quiet_NaN())
 #endif
 
-PalletRansac::PalletRansac(const double pallet_convergence_threshold,
+PalletRansac::PalletRansac(const LogFunction & log,
+                           const double pallet_convergence_threshold,
                            const uint64 iterations,
                            const double max_pose_correction_distance,
                            const double max_pose_correction_angle,
@@ -17,7 +18,7 @@ PalletRansac::PalletRansac(const double pallet_convergence_threshold,
                            const double planes_similarity_max_distance,
                            const double point_similarity_max_distance,
                            const uint64 random_seed)
-  : m_random_gen(random_seed)
+    : m_log(log), m_random_gen(random_seed)
 {
   m_pallet_convergence_threshold = pallet_convergence_threshold;
   m_iterations = iterations;
@@ -124,13 +125,13 @@ ExpectedPallet PalletRansac::TransformPallet(const ExpectedPallet & ep, const Ei
   return result;
 }
 
-double PalletRansac::NormalDistance(const Eigen::Vector3d & n1, const Eigen::Vector3d & n2, const double max_angle)
+double PalletRansac::NormalDistance(const Eigen::Vector3d & n1, const Eigen::Vector3d & n2, const double max_angle) const
 {
   const double d1 = std::acos(std::min(std::abs(n1.dot(n2)), 1.0)) / max_angle;
   return d1;
 }
 
-double PalletRansac::PlanesDistance(const Eigen::Vector4d & p1, const Eigen::Vector4d & p2, const double max_angle, const double max_distance)
+double PalletRansac::PlanesDistance(const Eigen::Vector4d & p1, const Eigen::Vector4d & p2, const double max_angle, const double max_distance) const
 {
   const Eigen::Vector3d n1 = p1.head<3>();
   const Eigen::Vector3d n2 = p2.head<3>();
@@ -150,6 +151,128 @@ Eigen::Vector3d PalletRansac::CombinePoses(const Eigen::Vector3d & a, const Eige
   const Eigen::Vector2d ptb = b.head<2>();
   result.head<2>() = Eigen::Rotation2Dd(a.z()).toRotationMatrix() * ptb + pta;
   return result;
+}
+
+bool PalletRansac::CheckNewCorrCompatibility(const ExpectedPallet & expected_pallet,
+                                             const ExpectedPallet & real_pallet,
+                                             const Uint64PairVector & available_corresp,
+                                             const Uint64PairSet & conflict_corresp,
+                                             const Uint64Vector & already_selected_corrs,
+                                             const uint64 maybe_new_corr,
+                                             const bool check_stability) const
+{
+  if (std::find(already_selected_corrs.begin(), already_selected_corrs.end(), maybe_new_corr) != already_selected_corrs.end())
+  {
+    return false; // do not allow duplicates
+  }
+
+  for (const uint64 already_corr : already_selected_corrs)
+    if (conflict_corresp.find(Uint64Pair(already_corr, maybe_new_corr)) != conflict_corresp.end())
+    {
+      return false; // rejected for conflict
+    }
+
+  const uint64 exp_elem_i = available_corresp[maybe_new_corr].second;
+  const uint64 real_elem_i = available_corresp[maybe_new_corr].first;
+  const ExpectedElement & exp_elem = expected_pallet[exp_elem_i];
+  const ExpectedElement & real_elem = real_pallet[real_elem_i];
+  const ExpectedElementType type = exp_elem.type;
+
+  if (check_stability && type == ExpectedElementType::PLANE)
+  {
+    // if plane, then check if already selected another parallel plane
+    // if so, fail to prevent instability
+    for (const uint64 already_corr : already_selected_corrs)
+    {
+      const uint64 already_exp_elem_i = available_corresp[already_corr].second;
+      const ExpectedElementType already_type = expected_pallet[already_exp_elem_i].type;
+      if (already_type != ExpectedElementType::PLANE)
+        continue;
+      const Eigen::Vector3d n = exp_elem.plane.head<3>();
+      const Eigen::Vector3d already_n = expected_pallet[already_exp_elem_i].plane.head<3>();
+      if (NormalDistance(n, already_n, m_planes_similarity_max_angle) < 1.0)
+      {
+        return false;
+      }
+    }
+  }
+
+  // if pillar, check right/left compatibility in general
+  if (type == ExpectedElementType::PILLAR)
+  {
+    // real left pillar, but expected pillar is right only
+    if (real_elem.pillar_left_plane_id != uint64(-1) &&
+        exp_elem.pillar_left_plane_id == uint64(-1) && exp_elem.pillar_right_plane_id != uint64(-1))
+      return false;
+    // real right pillar, but expected pillar is left only
+    if (real_elem.pillar_right_plane_id != uint64(-1) &&
+        exp_elem.pillar_right_plane_id == uint64(-1) && exp_elem.pillar_left_plane_id != uint64(-1))
+      return false;
+  }
+
+  // if pillar, check right/left compatibility with all planes
+  if (type == ExpectedElementType::PILLAR)
+  {
+    for (const uint64 already_corr : already_selected_corrs)
+    {
+      const uint64 already_exp_elem_i = available_corresp[already_corr].second;
+      const uint64 already_real_elem_i = available_corresp[already_corr].first;
+      const ExpectedElement & already_exp_elem = expected_pallet[already_exp_elem_i];
+      //const ExpectedElement & already_real_elem = expected_pallet[already_real_elem_i];
+      const ExpectedElementType already_type = already_exp_elem.type;
+      if (already_type != ExpectedElementType::PLANE)
+        continue;
+
+      if (exp_elem.pillar_left_plane_id == already_exp_elem_i)
+      {
+        if (real_elem.pillar_left_plane_id != already_real_elem_i)
+        {
+          return false;
+        }
+      }
+
+      if (exp_elem.pillar_right_plane_id == already_exp_elem_i)
+      {
+        if (real_elem.pillar_right_plane_id != already_real_elem_i)
+        {
+          return false;
+        }
+      }
+    }
+  }
+
+  // if plane, also check right/left compatibility with all pillars
+  if (type == ExpectedElementType::PLANE)
+  {
+    for (const uint64 already_corr : already_selected_corrs)
+    {
+      const uint64 already_exp_elem_i = available_corresp[already_corr].second;
+      const uint64 already_real_elem_i = available_corresp[already_corr].first;
+      const ExpectedElement & already_exp_elem = expected_pallet[already_exp_elem_i];
+      const ExpectedElement & already_real_elem = expected_pallet[already_real_elem_i];
+      const ExpectedElementType already_type = already_exp_elem.type;
+      if (already_type != ExpectedElementType::PILLAR)
+        continue;
+
+      if (already_exp_elem.pillar_left_plane_id == exp_elem_i)
+      {
+        if (already_real_elem.pillar_left_plane_id != real_elem_i)
+        {
+          return false;
+        }
+      }
+
+      if (already_exp_elem.pillar_right_plane_id == exp_elem_i)
+      {
+        if (already_real_elem.pillar_right_plane_id != real_elem_i)
+        {
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
 }
 
 void PalletRansac::Run(const ExpectedPallet & expected_pallet,
@@ -198,6 +321,18 @@ void PalletRansac::Run(const ExpectedPallet & expected_pallet,
       available_corresp_set.insert(Uint64Pair(real_i, expected_i));
     }
 
+  Uint64PairSet conflict_corresp;
+  {
+    for (uint64 i = 0; i < available_corresp.size(); i++)
+      for (uint64 h = 0; h < available_corresp.size(); h++)
+      {
+        if (available_corresp[i].first == available_corresp[h].first)
+          conflict_corresp.insert(Uint64Pair(i, h));
+        if (available_corresp[i].second == available_corresp[h].second)
+          conflict_corresp.insert(Uint64Pair(i, h));
+      }
+  }
+
   PalletDetectionPoseEstimation pdpe(m_pallet_convergence_threshold);
   pdpe.SetQuiet(true);
 
@@ -225,36 +360,17 @@ void PalletRansac::Run(const ExpectedPallet & expected_pallet,
     {
       std::uniform_int_distribution<uint64> distrib(0, available_corresp.size() - 1);
       const uint64 selected_corr = distrib(m_random_gen);
-      if (std::find(already_selected_corrs.begin(), already_selected_corrs.end(), selected_corr) != already_selected_corrs.end())
+
+      if (!CheckNewCorrCompatibility(my_expected_pallet, real_pallet, available_corresp, conflict_corresp,
+                                     already_selected_corrs, selected_corr, true))
       {
         fail = true;
         break;
       }
+
       const uint64 exp_elem_i = available_corresp[selected_corr].second;
       const uint64 real_elem_i = available_corresp[selected_corr].first;
       const ExpectedElementType type = my_expected_pallet[exp_elem_i].type;
-
-      if (type == ExpectedElementType::PLANE)
-      {
-        // if plane, then check if already selected another parallel plane
-        // if so, fail to prevent instability
-        for (const uint64 already_corr : already_selected_corrs)
-        {
-          const uint64 already_exp_elem_i = available_corresp[already_corr].second;
-          const ExpectedElementType already_type = my_expected_pallet[already_exp_elem_i].type;
-          if (already_type != ExpectedElementType::PLANE)
-            continue;
-          const Eigen::Vector3d n = my_expected_pallet[exp_elem_i].plane.head<3>();
-          const Eigen::Vector3d already_n = my_expected_pallet[already_exp_elem_i].plane.head<3>();
-          if (NormalDistance(n, already_n, m_planes_similarity_max_angle) < 1.0)
-          {
-            fail = true;
-            break;
-          }
-        }
-        if (fail)
-          break;
-      }
 
       if (type == ExpectedElementType::PILLAR)
       {
@@ -287,7 +403,7 @@ void PalletRansac::Run(const ExpectedPallet & expected_pallet,
         std::abs(pose.z()) > m_max_pose_correction_angle)
       continue;
 
-    Uint64PairVector consensus;
+    Uint64Vector consensus;
     {
       PalletRansac::ExpectedPallet new_expected_pallet = TransformPallet(my_expected_pallet, pose);
 
@@ -328,7 +444,16 @@ void PalletRansac::Run(const ExpectedPallet & expected_pallet,
         }
 
         if (!std::isnan(best_distance))
-          consensus.push_back(Uint64Pair(best_ri, ei));
+        {
+          const Uint64Pair new_corr = Uint64Pair(best_ri, ei);
+          if (available_corresp_set.find(new_corr) != available_corresp_set.end())
+          {
+            const uint64 new_corr_id = std::find(available_corresp.begin(), available_corresp.end(), new_corr) - available_corresp.begin();
+            if (CheckNewCorrCompatibility(my_expected_pallet, real_pallet, available_corresp, conflict_corresp,
+                                          consensus, new_corr_id, false))
+              consensus.push_back(new_corr_id);
+          }
+        }
       }
     }
 
@@ -340,8 +465,9 @@ void PalletRansac::Run(const ExpectedPallet & expected_pallet,
       plane_corrs.clear();
       point_corrs.clear();
 
-      for (const Uint64Pair & corresp : consensus)
+      for (const uint64 & corresp_id : consensus)
       {
+        const Uint64Pair & corresp = available_corresp[corresp_id];
         const uint64 exp_elem_i = corresp.second;
         const uint64 real_elem_i = corresp.first;
         const ExpectedElementType type = my_expected_pallet[exp_elem_i].type;
@@ -373,7 +499,10 @@ void PalletRansac::Run(const ExpectedPallet & expected_pallet,
           std::abs(refined_pose.z()) > m_max_pose_correction_angle)
         continue; // too distant
 
-      best_consensus = consensus;
+      best_consensus.clear();
+      best_consensus.reserve(consensus.size());
+      for (const uint64 corr_id : consensus)
+        best_consensus.push_back(available_corresp[corr_id]);
       best_pose = pose;
       best_refined_pose = refined_pose;
     }

@@ -116,6 +116,7 @@ class PalletDetectionNode
     m_cluster_image_pub = nodeptr->advertise<ImageMsg>("cluster_image", 1);
     m_edge_image_pub = nodeptr->advertise<ImageMsg>("edge_image", 1);
     m_plane_image_pub = nodeptr->advertise<ImageMsg>("plane_image", 1);
+    m_depth_image_pub = nodeptr->advertise<ImageMsg>("depth_image", 1);
 
     m_markers_pub = nodeptr->advertise<MarkerArrayMsg>("markers", 1);
 
@@ -239,6 +240,7 @@ class PalletDetectionNode
 
     simod_rolls_detection::DetectPalletResult result;
     result.success = detection_result.success;
+    result.consensus = detection_result.consensus;
     {
       Eigen::Affine3d pose = Eigen::Affine3d::Identity();
       pose.translation().head<2>() = detection_result.pose.head<2>();
@@ -320,6 +322,12 @@ class PalletDetectionNode
       {
         const Eigen::Vector4d & pillar = elem.pillar;
 
+        float pillar_lightness = 0.0f;
+        if (elem.pillar_left_plane_id != uint64(-1))
+          pillar_lightness += 0.4f;
+        if (elem.pillar_right_plane_id != uint64(-1))
+          pillar_lightness -= 0.4f;
+
         MarkerMsg marker;
         marker.header.frame_id = m_world_frame_id;
         marker.action = marker.ADD;
@@ -335,9 +343,9 @@ class PalletDetectionNode
         marker.pose.position.y = pillar.y();
         marker.pose.position.z = (pillar.w() + pillar.z()) / 2.0;
 
-        marker.color.r = base_color.x();
-        marker.color.g = base_color.y();
-        marker.color.b = base_color.z();
+        marker.color.r = std::min(1.0f, std::max(0.0f, base_color.x() + pillar_lightness));
+        marker.color.g = std::min(1.0f, std::max(0.0f, base_color.y() + pillar_lightness));
+        marker.color.b = std::min(1.0f, std::max(0.0f, base_color.z() + pillar_lightness));
         marker.color.a = 1.0;
 
         result.push_back(marker);
@@ -443,8 +451,10 @@ class PalletDetectionNode
       PublishImage(image, encoding, m_edge_image_pub);
     else if (name == "plane_image")
       PublishImage(image, encoding, m_plane_image_pub);
+    else if (name == "depth_image")
+      PublishImage(image, encoding, m_depth_image_pub);
     else
-      ROS_ERROR("Could not find image publisher with name %s", name.c_str());
+      ROS_WARN("pallet_detection_node: Could not find image publisher with name %s", name.c_str());
   }
 
   void PublishCloud(const PointXYZRGBCloud & cloud, const std::string & name)
@@ -456,7 +466,7 @@ class PalletDetectionNode
     else if (name == "valid_points_cloud")
       PublishCloud(cloud, m_valid_points_cloud_pub);
     else
-      ROS_ERROR("Could not find point cloud publisher with name %s", name.c_str());
+      ROS_WARN("pallet_detection_node: Could not find point cloud publisher with name %s", name.c_str());
   }
 
   void PublishPallet(const ExpectedPallet & real_pallet, const ExpectedPallet & loaded_pallet,
@@ -493,22 +503,22 @@ class PalletDetectionNode
     switch (level)
     {
     case 0:
-      ROS_DEBUG("%s", message.c_str());
+      ROS_DEBUG("pallet_detection_node: %s", message.c_str());
       break;
     case 1:
-      ROS_INFO("%s", message.c_str());
+      ROS_INFO("pallet_detection_node: %s", message.c_str());
       break;
     case 2:
-      ROS_WARN("%s", message.c_str());
+      ROS_WARN("pallet_detection_node: %s", message.c_str());
       break;
     case 3:
-      ROS_ERROR("%s", message.c_str());
+      ROS_ERROR("pallet_detection_node: %s", message.c_str());
       break;
     case 4:
-      ROS_FATAL("%s", message.c_str());
+      ROS_FATAL("pallet_detection_node: %s", message.c_str());
       break;
     default:
-      ROS_ERROR("Invalid logger level %d, message was %s", int(level), message.c_str());
+      ROS_ERROR("pallet_detection_node: Invalid logger level %d, message was %s", int(level), message.c_str());
     }
   }
 
@@ -538,6 +548,7 @@ class PalletDetectionNode
   ros::Publisher m_cluster_image_pub;
   ros::Publisher m_plane_image_pub;
   ros::Publisher m_edge_image_pub;
+  ros::Publisher m_depth_image_pub;
 
   ros::Publisher m_markers_pub;
 

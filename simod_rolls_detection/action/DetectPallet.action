@@ -9,6 +9,7 @@ float64 initial_guess_rotation
 ---
 # Result
 bool success
+uint64 consensus
 
 geometry_msgs/Pose pallet_pose
 geometry_msgs/Pose[] box_poses

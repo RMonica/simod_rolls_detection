@@ -25,6 +25,8 @@ class PalletDetection
   typedef PalletRansac::ExpectedElementType ExpectedElementType;
   typedef PalletRansac::ExpectedPallet ExpectedPallet;
   typedef PalletRansac::ExpectedElement ExpectedElement;
+  typedef PalletRansac::PillarPlaneRelation PillarPlaneRelation;
+  typedef PalletRansac::PillarType PillarType;
 
   typedef std::vector<Eigen::Vector4f, Eigen::aligned_allocator<Eigen::Vector4f> > Vector4fVector;
   typedef std::vector<Eigen::Vector4d, Eigen::aligned_allocator<Eigen::Vector4d> > Vector4dVector;
@@ -57,6 +59,9 @@ class PalletDetection
   typedef PalletFromImage::CameraInfo CameraInfo;
 
   typedef std::shared_ptr<PalletDetection> Ptr;
+
+  typedef PalletFromImage::CorrTemplateVector CorrTemplateVector;
+  typedef PalletFromImage::CorrTemplate CorrTemplate;
 
   struct Config
   {
@@ -96,6 +101,17 @@ class PalletDetection
     int plane_ransac_iterations = 2000;
     double plane_ransac_max_error = 0.1;
 
+    float th_scan_distance_window = 0.05f;
+    uint64 th_scan_counter_threshold = 500;
+    float th_scan_threshold_enter = 5000;
+    float th_scan_threshold_exit = 2500;
+
+    PalletFromImage::CorrTemplateVector correlation_templates;
+    uint64 correlation_multiresolution_count = 5;
+    float correlation_multiresolution_step = 0.8f;
+    float correlation_rescale = 0.5f;
+    float correlation_threshold = 0.05f;
+
     int random_seed = std::random_device()();
   };
 
@@ -109,6 +125,7 @@ class PalletDetection
   struct DetectionResult
   {
     bool success;
+    uint64 consensus;
     Eigen::Vector3d pose; // x, y, angle
     Affine3dVector boxes; // list of poses
   };
@@ -180,6 +197,8 @@ class PalletDetection
   double m_max_pose_correction_angle;
 
   uint64 m_random_seed;
+
+  Config m_config;
 
   LogFunction m_log = [](const uint, const std::string &){};
   PublishImageFunction m_publish_image = [](const cv::Mat &, const std::string &, const std::string &){};

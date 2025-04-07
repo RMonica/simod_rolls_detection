@@ -291,6 +291,7 @@ class PalletDetectionTest
 
     const bool success = result.success;
     ROS_INFO("pallet_detection_test: success: %s.", (success ? "TRUE" : "FALSE"));
+    ROS_INFO("pallet_detection_test: consensus: %d.", int(result.consensus));
 
     Eigen::Affine3d pallet_pose;
     tf::poseMsgToEigen(result.pallet_pose, pallet_pose);

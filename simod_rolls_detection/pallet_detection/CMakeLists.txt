@@ -15,7 +15,7 @@ include_directories(${EIGEN3_INCLUDE_DIRS})
 link_directories(${PCL_LIBRARY_DIRS})
 add_definitions(${PCL_DEFINITIONS})
 
-include_directories(${Ceres_INCLUDE_DIRS})
+include_directories(${CERES_INCLUDE_DIRS})
 
 add_definitions("-Wno-unused-local-typedefs")
 
@@ -29,6 +29,7 @@ target_link_libraries(pallet_detection_lib
   opencv_highgui
   opencv_imgproc
   ${PCL_LIBRARIES}
+  ${CERES_LIBRARIES}
 )
 
 install(
