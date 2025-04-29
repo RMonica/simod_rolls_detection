@@ -161,6 +161,8 @@ class PalletDetectionNode
 
     m_nodeptr->param<int>("random_seed", config.random_seed, std::random_device()());
 
+    ROS_INFO_STREAM("pallet_detection_node: creating PalletDetection instance with config:\n" << config.ToString());
+
     m_pallet_detection.reset(new PalletDetection(config));
 
     m_pallet_detection->SetLogFunction([this](const uint level, const std::string & message) {this->Log(level, message); });

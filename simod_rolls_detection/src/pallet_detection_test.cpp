@@ -273,7 +273,7 @@ class PalletDetectionTest
       ros::Duration(0.5).sleep();
 
       ROS_INFO("pallet_detection_test: publishing");
-      PublishImage(rgb_image, "rgb8", m_rgb_image_pub);
+      PublishImage(rgb_image, "bgr8", m_rgb_image_pub);
       PublishImage(depth_image, "16UC1", m_depth_image_pub);
 
       sensor_msgs::CameraInfo camera_info_msg;

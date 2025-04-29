@@ -8,6 +8,7 @@
 #include <string>
 #include <stdint.h>
 #include <memory>
+#include <sstream>
 
 // OpenCV
 #include <opencv2/opencv.hpp>
@@ -113,6 +114,61 @@ class PalletDetection
     float correlation_threshold = 0.05f;
 
     int random_seed = std::random_device()();
+
+    std::string ToString() const
+    {
+      std::ostringstream ostr;
+      ostr << "depth_hough_threshold " << depth_hough_threshold << "\n";
+      ostr << "depth_hough_min_length " << depth_hough_min_length << "\n";
+      ostr << "depth_hough_max_gap " << depth_hough_max_gap << "\n";
+
+      ostr << "min_plane_camera_distance " << min_plane_camera_distance << "\n";
+      ostr << "vertical_line_angle_tolerance " << vertical_line_angle_tolerance << "\n";
+
+      ostr << "ransac_plane_angle_tolerance " << ransac_plane_angle_tolerance << "\n";
+      ostr << "ransac_plane_distance_tolerance " << ransac_plane_distance_tolerance << "\n";
+      ostr << "ransac_plane_inliers_tolerance " << ransac_plane_inliers_tolerance << "\n";
+
+      ostr << "plane_camera_max_angle " << plane_camera_max_angle << "\n";
+
+      ostr << "plane_edge_discontinuity_dist_th " << plane_edge_discontinuity_dist_th << "\n";
+      ostr << "plane_edge_discontinuity_angle_th " << plane_edge_discontinuity_angle_th << "\n";
+
+      ostr << "depth_image_max_discontinuity_th " << depth_image_max_discontinuity_th << "\n";
+      ostr << "depth_image_max_vertical_angle "<< depth_image_max_vertical_angle << "\n";
+      ostr << "depth_image_normal_window " << depth_image_normal_window << "\n";
+      ostr << "depth_image_closing_window " << depth_image_closing_window << "\n";
+
+      ostr << "min_cluster_points_at_1m " << min_cluster_points_at_1m << "\n";
+      ostr << "min_cluster_points " << min_cluster_points << "\n";
+
+      ostr << "pillars_merge_threshold " << pillars_merge_threshold << "\n";
+
+      ostr << "planes_similarity_max_angle " << planes_similarity_max_angle << "\n";
+      ostr << "planes_similarity_max_distance " << planes_similarity_max_distance << "\n";
+      ostr << "points_similarity_max_distance " << points_similarity_max_distance << "\n";
+
+      ostr << "max_pose_correction_distance " << max_pose_correction_distance << "\n";
+      ostr << "max_pose_correction_angle " << max_pose_correction_angle << "\n";
+
+      ostr << "plane_ransac_iterations " << plane_ransac_iterations << "\n";
+      ostr << "plane_ransac_max_error " << plane_ransac_max_error << "\n";
+
+      ostr << "th_scan_distance_window " << th_scan_distance_window << "\n";
+      ostr << "th_scan_counter_threshold " << th_scan_counter_threshold << "\n";
+      ostr << "th_scan_threshold_enter " << th_scan_threshold_enter << "\n";
+      ostr << "th_scan_threshold_exit " << th_scan_threshold_exit << "\n";
+
+      PalletFromImage::CorrTemplateVector correlation_templates;
+      ostr << "correlation_multiresolution_count " << correlation_multiresolution_count << "\n";
+      ostr << "correlation_multiresolution_step " << correlation_multiresolution_step << "\n";
+      ostr << "correlation_rescale " << correlation_rescale << "\n";
+      ostr << "correlation_threshold " << correlation_threshold << "\n";
+
+      ostr << "random_seed " << random_seed << "\n";
+
+      return ostr.str();
+    }
   };
 
   struct BoundingBox
