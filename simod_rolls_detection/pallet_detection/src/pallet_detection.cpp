@@ -366,7 +366,7 @@ cv::Mat PalletDetection::DepthToFloat(const cv::Mat & depth_image) const
 
 IntVectorPtr PalletDetection::FilterCloudByVerticalAngle(const PointXYZRGBCloud & cloud, const IntVector & valid_indices) const
 {
-  m_log(1, "Filter Cloud By Vertical Angle start");
+  m_log(1, "Filter Cloud By Vertical Angle start, with " + std::to_string(valid_indices.size()) + " indices.");
   IntVectorPtr result(new IntVector);
 
   const int WINDOW = m_depth_image_normal_window;
@@ -387,6 +387,12 @@ IntVectorPtr PalletDetection::FilterCloudByVerticalAngle(const PointXYZRGBCloud 
     const int idx = valid_indices[i];
     const int x = int(idx) % cloud.width;
     const int y = int(idx) / cloud.width;
+
+    const pcl::PointXYZRGB & ipi = cloud[idx];
+    const Eigen::Vector3f eipi(ipi.x, ipi.y, ipi.z);
+
+    if (eipi.array().isNaN().any())
+      continue;
 
     pcl::Indices indices;
     indices.reserve(WINDOW * WINDOW);
@@ -423,6 +429,8 @@ IntVectorPtr PalletDetection::FilterCloudByVerticalAngle(const PointXYZRGBCloud 
     float nx, ny, nz, c;
     ne.computePointNormal(cloud, indices, nx, ny, nz, c);
     const Eigen::Vector3f enormal(nx, ny, nz);
+    if (enormal.array().isNaN().any())
+      continue;
 
     const Eigen::Vector3f vertical_axis = Eigen::Vector3f::UnitZ();
     const float angle = std::acos(std::abs(enormal.normalized().dot(vertical_axis)));
@@ -486,7 +494,7 @@ IntVectorPtr PalletDetection::FilterCloudByVerticalAngle(const PointXYZRGBCloud 
       result_dilated->push_back(idx);
   }
 
-  m_log(1, "Filter Cloud By Vertical Angle end");
+  m_log(1, "Filter Cloud By Vertical Angle end, with " + std::to_string(result_dilated->size()) + " indices.");
 
   return result_dilated;
 }
@@ -501,6 +509,8 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
 {
   DetectionResult result;
   result.success = false;
+
+  srand(m_random_seed);
 
   cv::Mat depth_image = depth_image_in;
   depth_image = DepthToFloat(depth_image);
