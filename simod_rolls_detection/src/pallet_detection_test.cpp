@@ -6,6 +6,7 @@
 #include <eigen_conversions/eigen_msg.h>
 #include <actionlib/client/simple_action_client.h>
 #include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/transform_listener.h>
 
 // OpenCV
 #include <opencv2/opencv.hpp>
@@ -62,7 +63,7 @@ class PalletDetectionTest
     float cx, cy;
   };
 
-  PalletDetectionTest(std::shared_ptr<Node> nodeptr): m_nodeptr(nodeptr)
+  PalletDetectionTest(std::shared_ptr<Node> nodeptr): m_nodeptr(nodeptr), m_tf_listener(m_tf_buffer)
   {
     m_timer = m_nodeptr->createTimer(ros::Duration(0.0), [this](const ros::TimerEvent &){this->Run(); }, true);
 
@@ -86,6 +87,8 @@ class PalletDetectionTest
     m_camera_info_pub = nodeptr->advertise<sensor_msgs::CameraInfo>(m_camera_info_topic, 1);
 
     m_nodeptr->param<std::string>("world_frame_id", m_world_frame_id, "map");
+    m_nodeptr->param<std::string>("camera_frame_id", m_camera_frame_id, "camera");
+
     m_tf_broadcaster = std::make_shared<tf2_ros::TransformBroadcaster>();
   }
 
@@ -170,6 +173,17 @@ class PalletDetectionTest
     return result;
   }
 
+  BoundingBox LoadInitialGuess(float & floor_z) const
+  {
+    std::ifstream ifile(m_initial_guess_file_name);
+    if (!ifile)
+    {
+      ROS_FATAL("could not load initial_guess: %s", m_initial_guess_file_name.c_str());
+      std::exit(4);
+    }
+    return LoadInitialGuess(ifile, floor_z);
+  }
+
   BoundingBox LoadInitialGuess(std::istream & istr, float & floor_z) const
   {
     BoundingBox result;
@@ -244,7 +258,49 @@ class PalletDetectionTest
     BoundingBox initial_guess;
     CameraInfo camera_info;
     float floor_z;
-    Load(rgb_image, depth_image, camera_info, camera_pose, initial_guess, floor_z);
+    if (!m_use_real_camera)
+      Load(rgb_image, depth_image, camera_info, camera_pose, initial_guess, floor_z);
+    else
+      initial_guess = LoadInitialGuess(floor_z);
+
+    if (!m_use_real_camera)
+    {
+      if (!MatrixFromFile(m_camera_pose_file_name, camera_pose))
+      {
+        ROS_FATAL("could not load camera_pose: %s", m_camera_pose_file_name.c_str());
+        std::exit(3);
+      }
+
+      TransformStampedMsg t;
+      tf::transformEigenToMsg(camera_pose.cast<double>(), t.transform);
+
+      t.header.stamp = ros::Time::now();
+      t.header.frame_id = m_world_frame_id;
+      t.child_frame_id = m_camera_frame_id;
+
+      ROS_INFO("pallet_detection_test: sending simulated camera pose to TF.");
+      m_tf_broadcaster->sendTransform(t);
+    }
+
+    geometry_msgs::TransformStamped transformStamped;
+    const double MAX_WAIT = 5.0; // wait at most 5 seconds for the transform
+    try
+    {
+      ROS_INFO("pallet_detection_test: tf: waiting for camera pose between '%s' and '%s'",
+               m_world_frame_id.c_str(), m_camera_frame_id.c_str());
+      transformStamped = m_tf_buffer.lookupTransform(m_world_frame_id, m_camera_frame_id,
+                                                     ros::Time(0), ros::Duration(MAX_WAIT));
+      Eigen::Affine3d camera_pose_d;
+      tf::transformMsgToEigen(transformStamped.transform, camera_pose_d);
+      camera_pose = camera_pose_d.cast<float>();
+      ROS_INFO("pallet_detection_test: tf: received camera pose.");
+    }
+    catch (tf2::TransformException &ex)
+    {
+      ROS_FATAL("pallet_detection_test: tf: could not find camera pose between '%s' and '%s' within %f seconds: %s",
+                m_world_frame_id.c_str(), m_camera_frame_id.c_str(), double(MAX_WAIT), ex.what());
+      std::exit(6);
+    }
 
     simod_rolls_detection::DetectPalletGoal goal;
     goal.initial_guess_center.x = initial_guess.center.x();
@@ -354,7 +410,11 @@ class PalletDetectionTest
   bool m_use_real_camera;
 
   std::string m_world_frame_id;
+  std::string m_camera_frame_id;
   std::shared_ptr<tf2_ros::TransformBroadcaster> m_tf_broadcaster;
+
+  tf2_ros::Buffer m_tf_buffer;
+  tf2_ros::TransformListener m_tf_listener;
 
   std::string m_detect_pallet_action;
 

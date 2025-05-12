@@ -9,6 +9,9 @@
     <param name="rgb_image_topic" type="string" value="/oak/rgb/image_raw" />
     <param name="camera_info_topic" type="string" value="/oak/stereo/camera_info" />
 
+    <!-- increase this if first camera frames are bad for some reason -->
+    <param name="discard_first_camera_frames" type="int" value="0" />
+
     <param name="depth_hough_threshold" type="int" value="200" />
     <param name="depth_hough_min_length" type="double" value="100" />
     <param name="depth_hough_max_gap" type="double" value="50" />
@@ -44,6 +47,7 @@
   <node pkg="simod_rolls_detection" type="pallet_detection_test" name="pallet_detection_test" output="screen">
 
     <param name="world_frame_id" type="string" value="map" />
+    <param name="camera_frame_id" type="string" value="camera" />
 
     <param name="depth_image_topic" type="string" value="/oak/stereo/image_raw" />
     <param name="rgb_image_topic" type="string" value="/oak/rgb/image_raw" />

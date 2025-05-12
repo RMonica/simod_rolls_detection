@@ -27,6 +27,7 @@ The algorithm within the node has many configuration parameters, which are beyon
 
 - `detect_pallet_action`: the name of the action server which will be created by this node. Default: `/detect_pallet`.
 - `depth_image_topic`, `rgb_image_topic` and `camera_info_topic`: the node will subscribe to these topics to read depth, color and camera_info of the RGB-D image.
+- `discard_first_camera_frames`: if the first images sent by the camera are corrupted for some reason, set this to a positive integer value to ignore this many first images received.
 
 When the action is called, the node first waits for messages from the camera on the `depth_image_topic`, `rgb_image_topic` and `camera_info_topic` topics.
 The detection algorithm is executed only when at least one message is received for each topic.
@@ -156,14 +157,18 @@ The node can operate in two modes, depending on the parameter `use_real_camera`.
 
 If `use_real_camera` is true, the node will not publish to the topics. Instead, in the launch file the `oak_d_pro.launch` file is included to connect to the real camera.
 
+The node reads the current camera pose with respect to the *base* reference frame from TF. The *base* TF frame is configured using parameter `world_frame_id`, and camera frame is configured using parameter `camera_frame_id`. If `use_real_camera` is false, the node also loads the camera pose from file (see parameter `camera_pose_filename`) and publishes it between these two TF, to simulate an external source which provides the camera pose.
+
 **Parameters**
 
 - `rgb_filename`: name of the color image file (only if `use_real_camera` is false).
 - `depth_filename`: name of the color image file (16-bit PNG) (only if `use_real_camera` is false).
 - `camera_info_filename`: name of the camera info file (text file) (only if `use_real_camera` is false).
 - `expected_pallet_filename`: file name of the pallet description.
-- `camera_pose_filename`: file name of the camera pose.
+- `camera_pose_filename`: file name of the camera pose (only if `use_real_camera` is false).
 - `initial_guess_filename`: file name of the initial guess.
+- `world_frame_id`: name of the *base* TF frame.
+- `camera_frame_id`: name of the *camera* TF frame.
 
 *Camera info file*
 

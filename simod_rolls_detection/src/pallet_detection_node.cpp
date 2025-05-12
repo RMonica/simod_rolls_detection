@@ -126,6 +126,8 @@ class PalletDetectionNode
     m_nodeptr->param<int>("depth_hough_min_length", config.depth_hough_min_length, 100);
     m_nodeptr->param<int>("depth_hough_max_gap", config.depth_hough_max_gap, 50);
 
+    m_nodeptr->param<int>("discard_first_camera_frames", m_discard_first_camera_frames, 0);
+
     m_nodeptr->param<double>("min_plane_camera_distance", config.min_plane_camera_distance, 0.5);
 
     m_nodeptr->param<double>("vertical_line_angle_tolerance", config.vertical_line_angle_tolerance, M_PI / 10.0f);
@@ -191,20 +193,28 @@ class PalletDetectionNode
     {
       ros::Rate wait_rate(100);
       std::unique_lock<std::mutex> lock(m_mutex);
-      m_last_rgb_image = cv::Mat();
-      m_last_depth_image = cv::Mat();
-      m_last_camera_info.reset();
-      while (m_last_rgb_image.empty() || m_last_depth_image.empty() || !m_last_camera_info)
+      if (m_discard_first_camera_frames)
+        ROS_INFO("pallet_detection_node: first %d camera frames will be discarded.",
+                 int(m_discard_first_camera_frames));
+      for (int i = 0; i < m_discard_first_camera_frames + 1; i++)
       {
-        lock.unlock();
-        ROS_INFO_THROTTLE(2.0, "pallet_detection_node: waiting for images...");
-        wait_rate.sleep();
-        lock.lock();
+        m_last_rgb_image = cv::Mat();
+        m_last_depth_image = cv::Mat();
+        m_last_camera_info.reset();
+        while (m_last_rgb_image.empty() || m_last_depth_image.empty() || !m_last_camera_info)
+        {
+          lock.unlock();
+          ROS_INFO_THROTTLE(2.0, "pallet_detection_node: waiting for images...");
+          wait_rate.sleep();
+          lock.lock();
+
+          if (!ros::ok())
+            return;
+        }
 
         if (!ros::ok())
           return;
       }
-
 
       rgb_image = m_last_rgb_image;
       depth_image = m_last_depth_image;
@@ -573,6 +583,8 @@ class PalletDetectionNode
 
   ros::Timer m_timer;
   std::mutex m_mutex;
+
+  int m_discard_first_camera_frames;
 
   PalletDetection::Ptr m_pallet_detection;
 };
