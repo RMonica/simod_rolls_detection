@@ -131,7 +131,8 @@ double PalletRansac::NormalDistance(const Eigen::Vector3d & n1, const Eigen::Vec
   return d1;
 }
 
-double PalletRansac::PlanesDistance(const Eigen::Vector4d & p1, const Eigen::Vector4d & p2, const double max_angle, const double max_distance) const
+double PalletRansac::PlanesDistance(const Eigen::Vector4d & p1, const Eigen::Vector4d & p2,
+                                    const double max_angle, const double max_distance) const
 {
   const Eigen::Vector3d n1 = p1.head<3>();
   const Eigen::Vector3d n2 = p2.head<3>();
@@ -425,7 +426,7 @@ void PalletRansac::Run(const ExpectedPallet & expected_pallet,
           if (re.type == ExpectedElementType::PILLAR)
           {
             distance = (ee.pillar.head<2>() - re.pillar.head<2>()).norm();
-            if (distance > m_planes_similarity_max_distance)
+            if (distance > m_point_similarity_max_distance)
               continue;
           }
 

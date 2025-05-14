@@ -547,6 +547,32 @@ cv::Mat PalletFromImage::DoCorrelation(const cv::Mat & rgb_image, const cv::Mat 
   return bool_max_result;
 }
 
+Eigen::Vector4f PalletFromImage::EnsureVerticalPlane(const Eigen::Vector4f & coeffs, const Eigen::Affine3f & camera_pose,
+                                                     const Eigen::Vector3f & center)
+{
+  Eigen::Vector4f coefficients = coeffs;
+
+  // make sure plane is vertical
+  {
+    std::cout << "coefficients before: " << coefficients.transpose() << std::endl;
+    const float norm = coefficients.head<2>().norm();
+    if (norm > 0.0001f)
+      coefficients = coefficients / norm;
+    coefficients.z() = 0.0;
+    coefficients.w() = -coefficients.head<3>().dot(center);
+  }
+
+  // ensure plane normal points towards the camera
+  {
+    const Eigen::Vector3f plane_normal_camera = camera_pose.linear().transpose() * coefficients.head<3>().normalized();
+    const float dot = plane_normal_camera.dot(Eigen::Vector3f::UnitZ());
+    if (dot > 0.0f)
+      coefficients = -coefficients;
+  }
+
+  return coefficients;
+}
+
 void PalletFromImage::Run(const cv::Mat & rgb_image, const cv::Mat & depth_image,
                           const PointXYZRGBCloudPtr & z_up_cloud, const IntVectorPtr valid_indices_ptr_in,
                           const Eigen::Affine3f & camera_pose, const CameraInfo &camera_info,
@@ -624,13 +650,6 @@ void PalletFromImage::Run(const cv::Mat & rgb_image, const cv::Mat & depth_image
     if (weighted_point_count < m_min_cluster_points_at_1m)
       continue;
 
-    // make sure plane is vertical
-    {
-      const float norm = coefficients.head<2>().norm();
-      coefficients = coefficients / norm;
-      coefficients.z() = 0.0;
-    }
-
     {
       const Eigen::Vector3f plane_normal_camera = camera_pose.linear().transpose() * coefficients.head<3>().normalized();
       const float dot = plane_normal_camera.dot(Eigen::Vector3f(0.0f, 0.0f, 1.0f));
@@ -654,6 +673,7 @@ void PalletFromImage::Run(const cv::Mat & rgb_image, const cv::Mat & depth_image
 
     IntVectorPtr relaxed_inliers = FindPlaneInliers(z_up_cloud, valid_indices_ptr, coefficients);
     relaxed_inliers = FilterInliersBySmallClusters(*relaxed_inliers, width, height, MIN_CLUSTER_SIZE);
+
     {
       float weighted_point_count = 0.0;
       for (const int index : *relaxed_inliers)
@@ -699,6 +719,11 @@ void PalletFromImage::Run(const cv::Mat & rgb_image, const cv::Mat & depth_image
       if (counter)
         center /= counter;
       found_plane_centers.push_back(center);
+
+      // recompute plane coefficients based on new inliers
+      coefficients = InliersFitPlane(z_up_cloud, coefficients, relaxed_inliers);
+      coefficients = EnsureVerticalPlane(coefficients, camera_pose, center);
+
       found_plane_z.push_back(Eigen::Vector2f(min_z, max_z));
       found_plane_inliers.push_back(*relaxed_inliers);
     }
@@ -820,6 +845,24 @@ PalletFromImage::FloatVector PalletFromImage::FindPlaneDistance(const PointXYZRG
   for (size_t i = 0; i < distances.size(); i++)
     result[i] = distances[i];
   return result;
+}
+
+Eigen::Vector4f PalletFromImage::InliersFitPlane(const PointXYZRGBCloudPtr cloud,
+                                                 const Eigen::Vector4f & prev_coeff,
+                                                 const IntVectorPtr inliers)
+{
+  RANSAC_PP_Model::Ptr pp_model(new RANSAC_PP_Model(cloud));
+
+  pp_model->setInputCloud(cloud);
+  pp_model->setAxis(Eigen::Vector3f::UnitZ());
+  pp_model->setEpsAngle(0.0);
+
+  pcl::Indices samples = *inliers;
+  Eigen::VectorXf coeff;
+  Eigen::VectorXf prev_c = prev_coeff;
+  pp_model->optimizeModelCoefficients(samples, prev_c, coeff);
+
+  return Eigen::Vector4f(coeff);
 }
 
 PalletFromImage::IntVectorPtr PalletFromImage::IntVectorSetDifference(const IntVector & a, const IntVector & b)

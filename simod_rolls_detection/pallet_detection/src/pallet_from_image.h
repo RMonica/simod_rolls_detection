@@ -102,6 +102,9 @@ class PalletFromImage
                   const float correlation_threshold);
 
   Eigen::Vector4f RansacFitPlane(const PointXYZRGBCloudPtr cloud, const IntVectorPtr remaining_indices, IntVector & inliers);
+  Eigen::Vector4f InliersFitPlane(const PointXYZRGBCloudPtr cloud, const Eigen::Vector4f &prev_coeff, const IntVectorPtr inliers);
+  Eigen::Vector4f EnsureVerticalPlane(const Eigen::Vector4f & coeffs, const Eigen::Affine3f & camera_pose,
+                                      const Eigen::Vector3f &center);
   IntVectorPtr FindPlaneInliers(const PointXYZRGBCloudPtr cloud, const IntVectorPtr remaining_indices,
                                 const Eigen::Vector4f & plane_coefficients);
   FloatVector FindPlaneDistance(const PointXYZRGBCloudPtr cloud, const IntVectorPtr remaining_indices,
