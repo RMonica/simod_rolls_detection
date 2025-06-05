@@ -19,15 +19,16 @@
 
 #include "pallet_ransac.h"
 #include "pallet_from_image.h"
+#include "expected_pallet.h"
+#include "boxes_to_pallet_description.h"
 
 class PalletDetection
 {
   public:
-  typedef PalletRansac::ExpectedElementType ExpectedElementType;
-  typedef PalletRansac::ExpectedPallet ExpectedPallet;
-  typedef PalletRansac::ExpectedElement ExpectedElement;
-  typedef PalletRansac::PillarPlaneRelation PillarPlaneRelation;
-  typedef PalletRansac::PillarType PillarType;
+  using ExpectedElement = pallet_detection::ExpectedElement;
+  using ExpectedPallet = pallet_detection::ExpectedPallet;
+  using ExpectedElementVector = pallet_detection::ExpectedElementVector;
+  using ExpectedElementType = pallet_detection::ExpectedElementType;
 
   typedef std::vector<Eigen::Vector4f, Eigen::aligned_allocator<Eigen::Vector4f> > Vector4fVector;
   typedef std::vector<Eigen::Vector4d, Eigen::aligned_allocator<Eigen::Vector4d> > Vector4dVector;
@@ -115,6 +116,10 @@ class PalletDetection
 
     int random_seed = std::random_device()();
 
+    bool auto_generate_plane_pillars = true;
+    double auto_generate_plane_pillars_viewpoint_x = -1.0f;
+    double auto_generate_plane_pillars_viewpoint_y = 0.0f;
+
     std::string ToString() const
     {
       std::ostringstream ostr;
@@ -166,6 +171,8 @@ class PalletDetection
       ostr << "correlation_threshold " << correlation_threshold << "\n";
 
       ostr << "random_seed " << random_seed << "\n";
+
+      ostr << "auto_generate_plane_pillars " << auto_generate_plane_pillars << "\n";
 
       return ostr.str();
     }

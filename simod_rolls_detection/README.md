@@ -23,11 +23,12 @@ Outputs are:
 
 **Parameters**
 
-The algorithm within the node has many configuration parameters, which are beyond the scope of this readme. Useful parameters for interfacing with the node are:
+The algorithm within the node has many configuration parameters, which are beyond the scope of this readme. Useful parameters are:
 
 - `detect_pallet_action`: the name of the action server which will be created by this node. Default: `/detect_pallet`.
 - `depth_image_topic`, `rgb_image_topic` and `camera_info_topic`: the node will subscribe to these topics to read depth, color and camera_info of the RGB-D image.
 - `discard_first_camera_frames`: if the first images sent by the camera are corrupted for some reason, set this to a positive integer value to ignore this many first images received.
+- `auto_generate_plane_pillars` (bool): if true, planes and pillars are auto-generated from box definition (see the *pallet description* section below).
 
 When the action is called, the node first waits for messages from the camera on the `depth_image_topic`, `rgb_image_topic` and `camera_info_topic` topics.
 The detection algorithm is executed only when at least one message is received for each topic.
@@ -53,6 +54,9 @@ Each element may be followed by `name *word*` which defines a name for the eleme
 Comments may also be added starting with `#` at the beginning of the line.
 
 Coordinates of the elements are with respect to a local *pallet* reference frame, which is an arbitrary reference frame which should be roughly located at the center of the pallet.
+
+If the parameter `auto_generate_plane_pillars` is true, the *plane* and *pillar* elements are ignored. Instead, plane and pillar elements are auto-generated from the *box* elements and a virtual viewpoint. Only planes and pillars facing the virtual viewpoint are created.  
+The virtual viewpoint is located at the 2D coordinates specified by the parameters `auto_generate_plane_pillars_viewpoint_x` and `auto_generate_plane_pillars_viewpoint_y`. These parameters should be set to the approximate position of the camera in the local coordinates of the pallet. Default values are `(-1, 0)`, i.e., the virtual viewpoint is located along negative X axis.
 
 *plane*
 

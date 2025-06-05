@@ -163,6 +163,10 @@ class PalletDetectionNode
 
     m_nodeptr->param<int>("random_seed", config.random_seed, std::random_device()());
 
+    m_nodeptr->param<bool>("auto_generate_plane_pillars", config.auto_generate_plane_pillars, true);
+    m_nodeptr->param<double>("auto_generate_plane_pillars_viewpoint_x", config.auto_generate_plane_pillars_viewpoint_x, -1.0);
+    m_nodeptr->param<double>("auto_generate_plane_pillars_viewpoint_y", config.auto_generate_plane_pillars_viewpoint_y, 0.0);
+
     ROS_INFO_STREAM("pallet_detection_node: creating PalletDetection instance with config:\n" << config.ToString());
 
     m_pallet_detection.reset(new PalletDetection(config));

@@ -18,6 +18,7 @@
 #include "pallet_ransac.h"
 #include "pallet_from_image.h"
 #include "pallet_detection.h"
+#include "boxes_to_pallet_description.h"
 
 typedef pcl::PointCloud<pcl::PointXYZRGB> PointXYZRGBCloud;
 typedef PointXYZRGBCloud::Ptr PointXYZRGBCloudPtr;
@@ -163,20 +164,10 @@ PalletDetection::ExpectedPallet PalletDetection::LoadExpectedPallet(std::istream
           std::string plane_name;
           if (iss >> plane_name)
           {
-            uint64 plane_id = uint64(-1);
-            for (uint64 i = 0; i < result.size(); i++)
-              if (result[i].name == plane_name)
-                plane_id = i;
-
-            if ((result.size() > plane_id) && (result[plane_id].type == ExpectedElementType::PLANE))
-            {
-              if (cmd == "left")
-                new_element.pillar_left_plane_id = plane_id;
-              else
-                new_element.pillar_right_plane_id = plane_id;
-            }
+            if (cmd == "left")
+              new_element.pillar_left_plane_name = plane_name;
             else
-              m_log(3, "Plane " + plane_name + " does not exist at line '" + line + "'");
+              new_element.pillar_right_plane_name = plane_name;
           }
           else
           {
@@ -272,6 +263,10 @@ PalletDetection::ExpectedPallet PalletDetection::LoadExpectedPallet(std::istream
 
     result.push_back(new_element);
   }
+
+  const std::string upd_plane_ids = pallet_detection::UpdatePlaneIds(result);
+  if (upd_plane_ids != "")
+    m_log(3, "Error while matching plane ids in expected pallet: " + upd_plane_ids);
 
   return result;
 }
@@ -588,6 +583,32 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
     Eigen::Vector3d initial_guess(world_bounding_box.center.x(), world_bounding_box.center.y(), world_bounding_box.rotation);
 
     ExpectedPallet expected_pallet = LoadExpectedPallet(ifile);
+
+    if (m_config.auto_generate_plane_pillars)
+    {
+      m_log(1, "Generating planes and pillars from boxes.");
+      ExpectedPallet expected_pallet_boxes_only;
+      for (const ExpectedElement & e : expected_pallet)
+        if (e.type == ExpectedElementType::BOX)
+          expected_pallet_boxes_only.push_back(e);
+
+      m_log(1, "  There are " + std::to_string(expected_pallet_boxes_only.size()) + " boxes.");
+
+      const Eigen::Vector3f viewpoint = Eigen::Vector3f(m_config.auto_generate_plane_pillars_viewpoint_x,
+                                                        m_config.auto_generate_plane_pillars_viewpoint_y, 0.0f);
+      BoxesToPalletDescription btpd;
+      const ExpectedPallet planes_and_pillars = btpd.Run(expected_pallet_boxes_only, viewpoint);
+
+      m_log(1, "  Generated " + std::to_string(planes_and_pillars.size()) + " planes and pillars.");
+
+      expected_pallet.clear();
+      expected_pallet.insert(expected_pallet.end(), planes_and_pillars.begin(), planes_and_pillars.end());
+      expected_pallet.insert(expected_pallet.end(), expected_pallet_boxes_only.begin(), expected_pallet_boxes_only.end());
+      const std::string res = pallet_detection::UpdatePlaneIds(expected_pallet);
+      if (res != "")
+        m_log(3, "  Plane IDs consistency check error: " + res);
+    }
+
     expected_pallet = pallet_ransac.TransformPallet(expected_pallet, Eigen::Vector3d::Zero(), floor_height);
 
     Uint64PairVector consensus;

@@ -1,6 +1,7 @@
 <launch>
   <arg name="image_id" default="0"/>
-  <arg name="folder" default="oak_d_pallet_detect"/>
+  <!--<arg name="folder" default="oak_d_pallet_detect"/>-->
+  <arg name="folder" default="bologna_20250506"/>
   <arg name="use_real_camera" default="false" />
 
   <node pkg="simod_rolls_detection" type="pallet_detection_node" name="pallet_detection_node" output="screen">
@@ -44,6 +45,10 @@
 
     <param name="plane_ransac_iterations" type="int" value="2000" />
     <param name="plane_ransac_max_error" type="double" value="0.1" />
+
+    <param name="auto_generate_plane_pillars" type="bool" value="true" />
+    <param name="auto_generate_plane_pillars_viewpoint_x" type="double" value="-1.0" />
+    <param name="auto_generate_plane_pillars_viewpoint_y" type="double" value="0.0" />
 
   </node>
 
