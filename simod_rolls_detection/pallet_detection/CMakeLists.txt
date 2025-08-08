@@ -25,6 +25,7 @@ add_library(pallet_detection_lib SHARED
   src/pallet_from_image.cpp
   src/pallet_detection_solver.cpp
   src/boxes_to_pallet_description.cpp
+  src/close_line_detection.cpp
 )
 target_link_libraries(pallet_detection_lib
   opencv_highgui

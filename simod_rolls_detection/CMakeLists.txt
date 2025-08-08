@@ -27,6 +27,7 @@ find_package(Ceres REQUIRED)
 add_action_files(
   DIRECTORY action
   FILES DetectPallet.action
+        DetectCloseLine.action
 )
 
 generate_messages(
@@ -66,6 +67,20 @@ target_link_libraries(pallet_detection_node
   pallet_detection_lib
 )
 
+add_executable(close_line_detection_node 
+               src/close_line_detection_node.cpp
+               )
+
+add_dependencies(close_line_detection_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+target_link_libraries(close_line_detection_node
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${CERES_LIBRARIES}
+  pallet_detection_lib
+)
+
 add_executable(pallet_detection_test 
                src/pallet_detection_test.cpp
                )
@@ -73,6 +88,17 @@ add_executable(pallet_detection_test
 add_dependencies(pallet_detection_test ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 target_link_libraries(pallet_detection_test
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+)
+
+add_executable(close_line_detection_test 
+               src/close_line_detection_test.cpp
+               )
+
+add_dependencies(close_line_detection_test ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+target_link_libraries(close_line_detection_test
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
 )

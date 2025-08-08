@@ -554,7 +554,6 @@ Eigen::Vector4f PalletFromImage::EnsureVerticalPlane(const Eigen::Vector4f & coe
 
   // make sure plane is vertical
   {
-    std::cout << "coefficients before: " << coefficients.transpose() << std::endl;
     const float norm = coefficients.head<2>().norm();
     if (norm > 0.0001f)
       coefficients = coefficients / norm;

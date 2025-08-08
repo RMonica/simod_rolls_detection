@@ -563,16 +563,6 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
   ExpectedPallet estimated_refined_pallet;
 
   {
-    PalletRansac pallet_ransac(m_log,
-                               m_plane_ransac_max_error,
-                               m_plane_ransac_iterations,
-                               m_max_pose_correction_distance,
-                               m_max_pose_correction_angle,
-                               m_planes_similarity_max_angle,
-                               m_planes_similarity_max_distance,
-                               m_points_similarity_max_distance,
-                               m_random_seed);
-
     m_log(1, "Loading expected pallet file " + pallet_description_filename);
     std::ifstream ifile(pallet_description_filename);
     if (!ifile)
@@ -608,6 +598,16 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
       if (res != "")
         m_log(3, "  Plane IDs consistency check error: " + res);
     }
+
+    PalletRansac pallet_ransac(m_log,
+                               m_plane_ransac_max_error,
+                               m_plane_ransac_iterations,
+                               m_max_pose_correction_distance,
+                               m_max_pose_correction_angle,
+                               m_planes_similarity_max_angle,
+                               m_planes_similarity_max_distance,
+                               m_points_similarity_max_distance,
+                               m_random_seed);
 
     expected_pallet = pallet_ransac.TransformPallet(expected_pallet, Eigen::Vector3d::Zero(), floor_height);
 
