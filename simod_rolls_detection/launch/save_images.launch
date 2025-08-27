@@ -11,13 +11,13 @@
     <param name="save_pose" type="bool" value="true" />
     <param name="save_camera_info" type="bool" value="true" />
 
-    <param name="save_folder_name" type="string" value="$(find simod_rolls_detection)" />
+    <param name="save_folder_name" type="string" value="$(find simod_rolls_detection)/Test Camera 29-07-25 Superiori Inclinate" />
 
     <param name="depth_image_topic" type="string" value="/oak/stereo/image_raw" />
     <param name="color_image_topic" type="string" value="/oak/rgb/image_raw" />
     <param name="camera_info_topic" type="string" value="/oak/stereo/camera_info" />
 
-    <param name="tf_camera_frame" type="string" value="camera" />
-    <param name="tf_base_frame" type="string" value="world" />
+    <param name="tf_camera_frame" type="string" value="arm1_camera_oak_d_pro" />
+    <param name="tf_base_frame" type="string" value="plate_center" />
   </node>
 </launch>

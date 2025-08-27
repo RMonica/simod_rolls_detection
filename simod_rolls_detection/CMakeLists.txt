@@ -15,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   actionlib
   actionlib_msgs
   message_generation
+  roslib
 )
 
 find_package(PCL REQUIRED)
