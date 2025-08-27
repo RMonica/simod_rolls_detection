@@ -19,18 +19,26 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
+#include "expected_pallet.h"
+
 class PalletFromImage
 {
   public:
-  typedef PalletRansac::ExpectedPallet ExpectedPallet;
-  typedef PalletRansac::ExpectedElement ExpectedElement;
-  typedef PalletRansac::ExpectedElementType ExpectedElementType;
-  typedef PalletRansac::PillarType PillarType;
-  typedef PalletRansac::PillarTypeVector PillarTypeVector;
+
+  using ExpectedElement = pallet_detection::ExpectedElement;
+  using ExpectedPallet = pallet_detection::ExpectedPallet;
+  using ExpectedElementVector = pallet_detection::ExpectedElementVector;
+  using ExpectedElementType = pallet_detection::ExpectedElementType;
+
+  enum class PillarType
+  {
+    NONE   = 0b00,
+    LEFT   = 0b01,
+    RIGHT  = 0b10,
+    CENTER = 0b11,
+  };
+  typedef std::vector<PillarType> PillarTypeVector;
   typedef std::vector<PillarTypeVector> PillarTypeVectorVector;
-  typedef PalletRansac::PillarPlaneRelationVector PillarPlaneRelationVector;
-  typedef PalletRansac::PillarPlaneRelation PillarPlaneRelation;
-  typedef std::vector<PillarPlaneRelationVector> PillarPlaneRelationVectorVector;
 
   typedef pcl::PointCloud<pcl::PointXYZRGB> PointXYZRGBCloud;
   typedef PointXYZRGBCloud::Ptr PointXYZRGBCloudPtr;

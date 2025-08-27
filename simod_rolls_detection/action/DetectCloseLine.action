@@ -1,0 +1,15 @@
+# Goal
+geometry_msgs/Pose camera_pose
+
+float64 layer_z
+float64 initial_guess_x
+float64 initial_guess_window_size_x
+float64 initial_guess_y
+float64 initial_guess_window_size_y
+---
+# Result
+bool success
+
+geometry_msgs/Point[] points
+---
+# Feedback

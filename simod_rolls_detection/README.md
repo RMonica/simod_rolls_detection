@@ -6,6 +6,8 @@ simod_rolls_detection
 Pallet detection
 ----------------
 
+### Pallet detection node
+
 The `pallet_detection_node` node locates a specific configuration of boxes (aka "*pallet*") in a RGB-D image. Detection is started by calling a ROS action.
 
 In summary, inputs are:
@@ -13,7 +15,7 @@ In summary, inputs are:
 - A description of the configuration of boxes to be located.
 - A RGB-D image of the boxes, taken from the front with the camera principal axis roughly parallel to the ground.
 - The camera pose with respect to a *base* reference frame.<br />**Note**: Any frame can be used here, but the Z axis of the *base* frame must be  vertical, i.e. perpendicular to the ground.
-- The height of the ground with respect to the world frame.
+- The height of the ground with respect to the *base* frame.
 - An initial guess of the pose of the pallet.
 
 Outputs are:
@@ -23,11 +25,12 @@ Outputs are:
 
 **Parameters**
 
-The algorithm within the node has many configuration parameters, which are beyond the scope of this readme. Useful parameters for interfacing with the node are:
+The algorithm within the node has many configuration parameters, which are beyond the scope of this readme. Useful parameters are:
 
 - `detect_pallet_action`: the name of the action server which will be created by this node. Default: `/detect_pallet`.
 - `depth_image_topic`, `rgb_image_topic` and `camera_info_topic`: the node will subscribe to these topics to read depth, color and camera_info of the RGB-D image.
 - `discard_first_camera_frames`: if the first images sent by the camera are corrupted for some reason, set this to a positive integer value to ignore this many first images received.
+- `auto_generate_plane_pillars` (bool): if true, planes and pillars are auto-generated from box definition (see the *pallet description* section below).
 
 When the action is called, the node first waits for messages from the camera on the `depth_image_topic`, `rgb_image_topic` and `camera_info_topic` topics.
 The detection algorithm is executed only when at least one message is received for each topic.
@@ -53,6 +56,9 @@ Each element may be followed by `name *word*` which defines a name for the eleme
 Comments may also be added starting with `#` at the beginning of the line.
 
 Coordinates of the elements are with respect to a local *pallet* reference frame, which is an arbitrary reference frame which should be roughly located at the center of the pallet.
+
+If the parameter `auto_generate_plane_pillars` is true, the *plane* and *pillar* elements are ignored. Instead, plane and pillar elements are auto-generated from the *box* elements and a virtual viewpoint. Only planes and pillars facing the virtual viewpoint are created.  
+The virtual viewpoint is located at the 2D coordinates specified by the parameters `auto_generate_plane_pillars_viewpoint_x` and `auto_generate_plane_pillars_viewpoint_y`. These parameters should be set to the approximate position of the camera in the local coordinates of the pallet. Default values are `(-1, 0)`, i.e., the virtual viewpoint is located along negative X axis.
 
 *plane*
 
@@ -121,9 +127,7 @@ These topics are published by the `pallet_detection_node` with some useful debug
 
 Moreover, the TF reference frame of each detected box is published in the form `box_X` with respect to the *base* TF frame.
 
-
-Saving images
--------------
+### Saving images
 
 The node `save_images` is a utility to save the information needed by the `pallet_detection` node, so that it can be used offline.
 A launch file `save_images.launch` is also provided.
@@ -148,8 +152,7 @@ Parameters:
 - `depth_image_topic`, `color_image_topic` and `camera_info_topic`: topic names for the depth image, the color image and the camera info, respectively.
 - `save_color`, `save_depth`, `save_pose` and `save_camera_info`: boolean flags. Set these to false to disable saving of the respective file.
 
-Pallet detection test
----------------------
+### Pallet detection test
 
 The `pallet_detection_test` node (`pallet_detection_test.cpp`) is an example node which calls the action of `pallet_detection_node`. An example launch file `pallet_detection.launch` is also provided.
 
@@ -207,3 +210,80 @@ The camera pose file contains a 4x4 3D transformation matrix, with four numbers 
 0 0 0 1
 ```
 
+Close line detection
+--------------------
+
+### Close line detection node
+
+The `close_line_detection_node` detects the separation line between two plastic-wrapped boxes of paper rolls. The two boxes are observed from above using a RGB camera.
+
+In summary, inputs of the node are:
+
+- A RGB image
+- Intrinsic parameters of the camera (focal length, image center)
+- The camera pose with respect to a *base* reference frame.<br />**Note**: The Z axis of the *base* frame must be vertical, i.e. perpendicular to the top surface of the boxes, and the Y axis must be roughly perpendicular to the line to be located.
+- The height of the top surface of the boxes with respect to the *base* frame (along Z).
+- An initial guess of the position of the line, that is an estimate value of the Y coordinate of the line in the *base* frame.
+
+The output of the algorithm is a sequence of 3D points in the *base* reference frame. The points represent the detected line as a polyline.
+
+The `close_line_detection` detection node works by first re-projecting the image onto a virtual view from above, and then using pattern matching on the image. The patterns are circular or semi-circular patterns which match rolls surrounded by a dark region.
+
+**Parameters**
+
+Main parameters of the node are:
+
+- `rgb_image_topic` (string): name of the topic where the RGB image will be published.
+- `camera_info_topic` (string): name of the topic where the camera info will be published.
+- `discard_first_camera_frames` (int): the first `discard_first_camera_frames` images received will be ignored. Use this if the first frames are bad for some reason (e.g. auto-exposure still initializing).
+- `mode_basic` (bool): if true, always outputs a polyline with only two points, i.e., a single segment.
+- `detect_close_line_action` (string): name of the action to be called to perform the detection. By default, `/detect_close_line`.
+- `roll_diameter` (double): diameter of the paper rolls, in meters.
+
+**Action**
+
+Detection is started by calling the `/detect_close_line` action. The action is of type `simod_rolls_detection/DetectCloseLine.action`. The action goal has these fields:
+
+- `camera_pose`: pose of the camera with respect to the *base* frame.
+- `layer_z`: height of the top surface of the boxes in the *base* frame.
+- `initial_guess_y`: initial guess of the Y coordinate of the line.
+- `initial_guess_window_size_y`: uncertainty on the initial guess Y, in meters. A good value may be `0.2`.
+- `initial_guess_x`: initial guess of the X coordinate of the line.
+- `initial_guess_window_size_x`: uncertainty on the initial guess X, in meters.<br />**Note**: initial guess X is not really important, so you may just set `initial_guess_x` to `0` and `initial_guess_window_size_x` to a large value.
+
+When the action is called, the node first waits for messages from the camera on the `rgb_image_topic` and `camera_info_topic` topics.
+The detection algorithm is executed only when at least one message is received for each topic.
+
+The the action result contains these fields:
+
+- `success` (bool): true if the detection succeeded.
+- `points` (array of geometry_msgs/Point): the sequence of 3D points representing the polyline.
+
+**Debug information**
+
+During execution of the action, several debug images are published to several topics. The most interesting topic is likely the `~max_line_image`, which shows the detected line on the (re-projected) image.
+
+In case of detection error, also the `~correlation_total_image` may be interesting to see the regions of the image which incorrectly matched the patters.
+
+### Close line detection test
+
+The `close_line_detection_test` node (`close_line_detection_test.cpp`) is an example node which calls the action of `close_line_detection_node`. An example launch file `close_line_detection.launch` is also provided.
+
+The node can operate in two modes, depending on the parameter `use_real_camera`. If `use_real_camera` is false, the node loads the RGB image and the camera info from file and publishes them while the action is executing, to simulate the camera.
+
+If `use_real_camera` is true, the node will not publish to the topics. Instead, in the launch file the `oak_d_pro.launch` file is included to connect to the real camera.
+
+The node reads the current camera pose with respect to the *base* reference frame from TF. The *base* TF frame is configured using parameter `world_frame_id`, and camera frame is configured using parameter `camera_frame_id`. If `use_real_camera` is false, the node also loads the camera pose from file (see parameter `camera_pose_filename`) and publishes it between these two TF, to simulate an external source which provides the camera pose.
+
+After the execution of the action, the `close_line_detection_test` publishes all the points in the result as TF frames. The frames are named in the form `line_points_X` where X is a point.
+
+**Parameters**
+
+- `rgb_filename`: name of the color image file (only if `use_real_camera` is false).
+- `camera_info_filename`: name of the camera info file (text file) (only if `use_real_camera` is false).
+- `camera_pose_filename`: file name of the camera pose (only if `use_real_camera` is false).
+- `world_frame_id`: name of the *base* TF frame.
+- `camera_frame_id`: name of the *camera* TF frame.
+- `use_real_camera`: see above.
+- `layer_height`: see the `layer_z` field in the action.
+- `initial_guess_y`, `initial_guess_window_size_y`, `initial_guess_x`, `initial_guess_window_size_x`: see the corresponding parameters in the action.
