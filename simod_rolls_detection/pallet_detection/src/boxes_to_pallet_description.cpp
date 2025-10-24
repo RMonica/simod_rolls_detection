@@ -299,6 +299,17 @@ void BoxesToPalletDescription::generate_box_segments(const Eigen::Vector4f& cam_
   }
 }
 
+void BoxesToPalletDescription::create_cam_segment(const Eigen::Vector4f& cam_position, const Eigen::Vector4f& pillar_final_position, const Eigen::Vector4f& segment_color)
+{
+  ColoredSegment segment;
+
+  segment.P_cam = cam_position;
+  segment.P_pillar = pillar_final_position;
+  segment.color = segment_color;
+
+  cam_segment_array.push_back(segment);
+}
+
 void BoxesToPalletDescription::create_box_segment(const Eigen::Vector4f& pillar_1_position, const Eigen::Vector4f& pillar_2_position,
                                                   const Box& box, bool is_visible, bool show)
 {
@@ -488,10 +499,15 @@ void BoxesToPalletDescription::fill_elements_array()
 
 void BoxesToPalletDescription::generate_segments(const Box& box, const Eigen::Vector4f& cam_position)
 {
-  Eigen::Vector4f segment_1_color(1.0f, 0.5f, 0.0f, 1.0f);
-  Eigen::Vector4f segment_2_color(1.0f, 1.0f, 1.0f, 1.0f);
-  Eigen::Vector4f segment_3_color(0.0f, 1.0f, 0.5f, 1.0f);
-  Eigen::Vector4f segment_4_color(1.0f, 0.5f, 1.0f, 1.0f);
+  Eigen::Vector4f segment_1_color(1.0f, 0.5f, 0.0f, 0.5f);
+  Eigen::Vector4f segment_2_color(1.0f, 1.0f, 1.0f, 0.5f);
+  Eigen::Vector4f segment_3_color(0.0f, 1.0f, 0.5f, 0.5f);
+  Eigen::Vector4f segment_4_color(1.0f, 0.5f, 1.0f, 0.5f);
+
+  create_cam_segment(cam_position, box.getP1(), segment_1_color);
+  create_cam_segment(cam_position, box.getP2(), segment_2_color);
+  create_cam_segment(cam_position, box.getP3(), segment_3_color);
+  create_cam_segment(cam_position, box.getP4(), segment_4_color);
 
   create_box_segment(box.getP1(), box.getP2(), box, false, false);
   create_box_segment(box.getP2(), box.getP3(), box, false, false);
@@ -499,7 +515,7 @@ void BoxesToPalletDescription::generate_segments(const Box& box, const Eigen::Ve
   create_box_segment(box.getP4(), box.getP1(), box, false, false);
 }
 
-BoxesToPalletDescription::ExpectedPallet BoxesToPalletDescription::Run(const ExpectedPallet & epal, const Eigen::Vector3f & camera_pos)
+BoxesToPalletDescription::ExpectedPallet BoxesToPalletDescription::Run(const ExpectedPallet & epal, const Eigen::Vector3f & camera_pos, std::vector<Eigen::Vector4f> & cam_positions, std::vector<ColoredSegment> & visible_cam_segments)
 {
   n_boxes = epal.size();
   z_levels = get_all_z_levels(epal);
@@ -513,12 +529,15 @@ BoxesToPalletDescription::ExpectedPallet BoxesToPalletDescription::Run(const Exp
   {
     Eigen::Vector4f cam_position(camera_pos.x(), camera_pos.y(), z_level, 1.0f);
 
+    cam_positions.push_back(cam_position);
+
     box_segment_array.clear();
     box_visible_segment_array.clear();
     boxes.clear();
     projection_points.clear();
     visible_planes.clear();
     visible_plane_pillars.clear();
+    cam_segment_array.clear();
 
     for(uint64 i = 0; i < epal.size(); i++)
     {
@@ -562,6 +581,12 @@ BoxesToPalletDescription::ExpectedPallet BoxesToPalletDescription::Run(const Exp
     for(auto& box : boxes)
     {
       generate_box_segments(cam_position, box);
+    }
+
+    for(auto cam_segment : cam_segment_array)
+    {
+      if(is_element_visible(cam_position, cam_segment.P_pillar) && get_n_similar_pillar(cam_segment.P_pillar) < 2)
+        visible_cam_segments.push_back(cam_segment);
     }
 
     merge_segments(cam_position);

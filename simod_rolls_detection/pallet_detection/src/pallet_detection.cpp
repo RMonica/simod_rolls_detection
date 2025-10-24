@@ -8,6 +8,7 @@
 #include <set>
 #include <cmath>
 #include <map>
+#include <chrono>
 
 // PCL
 #include <pcl/common/colors.h>
@@ -18,6 +19,7 @@
 #include "pallet_ransac.h"
 #include "pallet_from_image.h"
 #include "pallet_detection.h"
+#include "expected_pallet.h"
 #include "boxes_to_pallet_description.h"
 
 typedef pcl::PointCloud<pcl::PointXYZRGB> PointXYZRGBCloud;
@@ -93,8 +95,8 @@ PalletDetection::PalletDetection(const Config & config)
   m_random_seed = config.random_seed;
 }
 
-PalletDetection::PointXYZRGBCloud PalletDetection::ImageToCloud(const cv::Mat & rgb_image, const cv::Mat & depth_image,
-                                                                const CameraInfo & camera_info_msg) const
+PalletDetection::PointXYZRGBCloud PalletDetection::ImageToCloud(const cv::Mat &rgb_image, const cv::Mat &depth_image,
+                                                                const CameraInfo &camera_info_msg) const
 {
   const size_t width = rgb_image.cols;
   const size_t height = rgb_image.rows;
@@ -506,6 +508,10 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
   result.success = false;
 
   srand(m_random_seed);
+  
+  auto time_pre_filtering_start = std::chrono::high_resolution_clock::now();
+  
+  m_log(1, "pre_filtering");
 
   cv::Mat depth_image = depth_image_in;
   depth_image = DepthToFloat(depth_image);
@@ -518,9 +524,6 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
   m_log(1, "image_to_cloud");
   const PointXYZRGBCloud cloud = ImageToCloud(rgb_image, depth_image, camera_info);
 
-  m_log(1, "publish_cloud");
-  m_publish_cloud(cloud, "input_cloud");
-
   BoundingBox world_bounding_box = initial_guess;
 
   IntVectorPtr valid_indices_ptr(new IntVector);
@@ -528,7 +531,13 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
                                                                 floor_height,
                                                                 world_bounding_box,
                                                                 *valid_indices_ptr);
+  
+  m_log(1, "publish_cloud");
+  m_publish_cloud(*z_up_cloud, "input_cloud");
   valid_indices_ptr = FilterCloudByVerticalAngle(*z_up_cloud, *valid_indices_ptr);
+  
+  auto time_pre_filtering_end = std::chrono::high_resolution_clock::now();
+  result.time_prefilter = std::chrono::duration_cast<std::chrono::microseconds>(time_pre_filtering_end - time_pre_filtering_start).count() / 1000000.0f;
 
   {
     PointXYZRGBCloud debug_cloud;
@@ -538,7 +547,10 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
     debug_cloud.width = debug_cloud.size();
     m_publish_cloud(debug_cloud, "valid_points_cloud");
   }
+  
+  auto time_pallet_from_image_start = std::chrono::high_resolution_clock::now();
 
+  m_log(1, "pallet_from_image");
   PalletFromImage pfi(m_log, m_min_cluster_points, m_min_cluster_points_at_1m,
                       m_plane_camera_max_angle, m_min_plane_camera_distance, m_depth_hough_threshold,
                       m_depth_hough_min_length, m_depth_hough_max_gap, m_vertical_line_angle_tolerance,
@@ -556,11 +568,17 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
                       m_config.correlation_threshold);
   ExpectedPallet real_pallet;
   pfi.Run(rgb_image, depth_image, z_up_cloud, valid_indices_ptr, camera_pose, camera_info, real_pallet);
+  
+  auto time_pallet_from_image_end = std::chrono::high_resolution_clock::now();
+  
+  result.time_pallet_from_image = std::chrono::duration_cast<std::chrono::microseconds>(time_pallet_from_image_end - time_pallet_from_image_start).count() / 1000000.0f;
 
   // Expected pallet RANSAC
   ExpectedPallet loaded_pallet;
   ExpectedPallet estimated_pallet;
   ExpectedPallet estimated_refined_pallet;
+  
+  auto time_load_expected_pallet_start = std::chrono::high_resolution_clock::now();
 
   {
     m_log(1, "Loading expected pallet file " + pallet_description_filename);
@@ -580,14 +598,19 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
       ExpectedPallet expected_pallet_boxes_only;
       for (const ExpectedElement & e : expected_pallet)
         if (e.type == ExpectedElementType::BOX)
+        {
           expected_pallet_boxes_only.push_back(e);
+        }
 
       m_log(1, "  There are " + std::to_string(expected_pallet_boxes_only.size()) + " boxes.");
 
       const Eigen::Vector3f viewpoint = Eigen::Vector3f(m_config.auto_generate_plane_pillars_viewpoint_x,
                                                         m_config.auto_generate_plane_pillars_viewpoint_y, 0.0f);
       BoxesToPalletDescription btpd;
-      const ExpectedPallet planes_and_pillars = btpd.Run(expected_pallet_boxes_only, viewpoint);
+
+      result.boxes_only_list = expected_pallet_boxes_only;
+
+      const ExpectedPallet planes_and_pillars = btpd.Run(expected_pallet_boxes_only, viewpoint, result.cam_positions, result.cam_segments);
 
       m_log(1, "  Generated " + std::to_string(planes_and_pillars.size()) + " planes and pillars.");
 
@@ -598,6 +621,13 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
       if (res != "")
         m_log(3, "  Plane IDs consistency check error: " + res);
     }
+    
+    auto time_load_expected_pallet_end = std::chrono::high_resolution_clock::now();
+    result.time_load_expected_pallet = std::chrono::duration_cast<std::chrono::microseconds>(time_load_expected_pallet_end - time_load_expected_pallet_start).count() / 1000000.0f;
+    
+    auto time_ransac_start = std::chrono::system_clock::now();
+    
+    m_log(1, "pallet_ransac");
 
     PalletRansac pallet_ransac(m_log,
                                m_plane_ransac_max_error,
@@ -624,6 +654,9 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
     m_log(1, "Best consensus is " + std::to_string(consensus.size()));
     m_log(1, "Best pose is " + e_to_string(pose.transpose()));
     m_log(1, "Best refined pose is " + e_to_string(refined_pose.transpose()));
+    
+    auto time_ransac_end = std::chrono::system_clock::now();
+    result.time_ransac = std::chrono::duration_cast<std::chrono::microseconds>(time_ransac_end - time_ransac_start).count() / 1000000.0f;
 
     {
       for (const Uint64Pair & corresp : consensus)
@@ -670,6 +703,8 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
     pose.linear() = Eigen::AngleAxisd(box.w(), Eigen::Vector3d::UnitZ()).matrix();
     result.boxes.push_back(pose);
   }
+  
+  m_log(1, "visualization");
 
   // pallet visualization
   m_publish_pallet(real_pallet, loaded_pallet, estimated_pallet, estimated_refined_pallet);
@@ -680,12 +715,14 @@ PalletDetection::DetectionResult PalletDetection::Detect(const cv::Mat & rgb_ima
     const cv::Mat cluster_image = pfi.GetLastClusterImage();
     const cv::Mat correlation_image = pfi.GetLastCorrelationImage();
     const cv::Mat bool_correlation_image = pfi.GetLastBoolCorrelationImage().clone();
-
+    const cv::Mat sdf_image = pfi.GetLastSdfImage().clone();
 
     if (!debug_edge_image.empty())
       m_publish_image(debug_edge_image, "rgb8", "edge_image");
     if (!correlation_image.empty())
       m_publish_image(correlation_image, "mono8", "correlation_image");
+    if (!sdf_image.empty())
+      m_publish_image(sdf_image, "mono8", "sdf_image");
     if (!bool_correlation_image.empty())
     {
       cv::Mat m = bool_correlation_image * 255;

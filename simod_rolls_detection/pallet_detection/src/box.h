@@ -15,6 +15,13 @@ struct Segment
     Eigen::Vector4f P2;
 };
 
+struct ColoredSegment
+{
+    Eigen::Vector4f P_cam;
+    Eigen::Vector4f P_pillar;
+    Eigen::Vector4f color;
+};
+
 inline bool operator==(const Segment& s1, const Segment& s2)
 {
     bool S1P1eqS2P1 = (s1.P1.x() <= s2.P1.x() + 0.01f && s1.P1.x() >= s2.P1.x() - 0.01f

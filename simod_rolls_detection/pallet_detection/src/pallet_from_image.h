@@ -148,7 +148,8 @@ class PalletFromImage
                             Vector4dVector & found_pillars,
                             Uint64Vector & pillar_parent_plane,
                             PillarTypeVector &pillar_type,
-                            cv::Mat &debug_edge_image) const;
+                            cv::Mat &debug_edge_image,
+                            cv::Mat &debug_sdf_image) const;
 
   void FindPillarsThresholdScan(const Vector4fVector & found_planes,
                                 const Uint64Vector &found_plane_indices,
@@ -167,6 +168,7 @@ class PalletFromImage
   const cv::Mat & GetLastClusterImage() const {return m_last_cluster_image; }
   const cv::Mat & GetLastCorrelationImage() const {return m_last_correlation_image; }
   const cv::Mat & GetLastBoolCorrelationImage() const {return m_last_bool_correlation_image; }
+  const cv::Mat & GetLastSdfImage() const {return m_last_sdf_image; }
 
   template <typename T>
   cv::Mat FillHoles(const cv::Mat & image, const T & hole_value, const uint64 iterations = 1) const;
@@ -209,6 +211,7 @@ class PalletFromImage
   cv::Mat m_last_cluster_image;
   cv::Mat m_last_correlation_image;
   cv::Mat m_last_bool_correlation_image;
+  cv::Mat m_last_sdf_image;
 
   LogFunction m_log = [](const uint, const std::string &){};
 };

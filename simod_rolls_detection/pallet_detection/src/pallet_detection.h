@@ -191,6 +191,14 @@ class PalletDetection
     uint64 consensus;
     Eigen::Vector3d pose; // x, y, angle
     Affine3dVector boxes; // list of poses
+    ExpectedPallet boxes_only_list;
+    std::vector<Eigen::Vector4f> cam_positions;
+    std::vector<ColoredSegment> cam_segments;
+    
+    float time_prefilter = 0.0f;
+    float time_pallet_from_image = 0.0f;
+    float time_load_expected_pallet = 0.0f;
+    float time_ransac = 0.0f;
   };
 
   PalletDetection(const Config & config);

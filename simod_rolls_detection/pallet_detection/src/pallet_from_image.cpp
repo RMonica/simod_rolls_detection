@@ -160,13 +160,16 @@ void PalletFromImage::FindPillarsEdgeImage(const Vector4fVector & found_planes,
                                            Vector4dVector & found_pillars,
                                            Uint64Vector & pillar_parent_plane,
                                            PillarTypeVector & pillar_type,
-                                           cv::Mat & debug_edge_image) const
+                                           cv::Mat & debug_edge_image,
+                                           cv::Mat & debug_sdf_image) const
 {
   const size_t height = cluster_image.rows;
   const size_t width = cluster_image.cols;
 
   debug_edge_image = cv::Mat(height, width, CV_8UC1, uint8(0));
   std::vector<std::vector<cv::Vec4i> > debug_found_lines(found_planes.size());
+
+  debug_sdf_image = cv::Mat(height, width, CV_8UC1, uint8(255));
 
   for (size_t plane_i = 0; plane_i < found_planes.size(); plane_i++)
   {
@@ -182,6 +185,8 @@ void PalletFromImage::FindPillarsEdgeImage(const Vector4fVector & found_planes,
 
     cv::Mat this_plane_distance_function_view;
     this_plane_distance_function.convertTo(this_plane_distance_function_view, CV_8UC1, 1, 128);
+
+    debug_sdf_image = cv::min(debug_sdf_image, this_plane_distance_function_view);
 
     cv::Mat local_edge_image = PlaneEdgeImage(cluster_image, depth_image, found_planes, plane_i);
     local_edge_image = DilateImage(local_edge_image, 1);
@@ -768,7 +773,8 @@ void PalletFromImage::Run(const cv::Mat & rgb_image, const cv::Mat & depth_image
   PillarTypeVector found_pillars_type;
   // extract edges
   FindPillarsEdgeImage(found_planes, found_plane_indices, cluster_image, depth_image,
-                       camera_pose, camera_info, found_pillars, found_pillars_parent_plane, found_pillars_type, m_last_edge_image);
+                       camera_pose, camera_info, found_pillars, found_pillars_parent_plane, found_pillars_type,
+                       m_last_edge_image, m_last_sdf_image);
 
   // FindPillarsThresholdScan(found_planes, found_plane_indices, found_plane_inliers,
   //                          depth_image, z_up_cloud, found_pillars, pillar_parent_plane);

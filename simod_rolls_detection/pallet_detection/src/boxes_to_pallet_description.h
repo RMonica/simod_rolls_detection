@@ -82,6 +82,9 @@ class BoxesToPalletDescription
   void generate_projection_points(const Eigen::Vector4f& cam_position, const Eigen::Vector4f& target_position, int index_box);
   void generate_box_segments(const Eigen::Vector4f& cam_position, Box& box);
 
+  void create_cam_segment(const Eigen::Vector4f& cam_position, const Eigen::Vector4f& pillar_final_position, 
+                          const Eigen::Vector4f& segment_color);
+
   void create_box_segment(const Eigen::Vector4f& pillar_1_position, const Eigen::Vector4f& pillar_2_position,
                           const Box& box, bool is_visible, bool show);
 
@@ -100,12 +103,13 @@ class BoxesToPalletDescription
 
   void generate_segments(const Box& box, const Eigen::Vector4f& cam_position);
 
-  ExpectedPallet Run(const ExpectedPallet & epal, const Eigen::Vector3f & camera_position);
+  ExpectedPallet Run(const ExpectedPallet & epal, const Eigen::Vector3f & camera_position, std::vector<Eigen::Vector4f> & cam_positions, std::vector<ColoredSegment> & visible_cam_segments);
 
   private:
   std::vector<Box> boxes;
   std::vector<Segment> box_segment_array;
   std::vector<Segment> box_visible_segment_array;
+  std::vector<ColoredSegment> cam_segment_array;
   std::vector<Eigen::Vector4f> projection_points;
   ExpectedElementVector elements;
   ExpectedElementVector visible_planes;
