@@ -10,6 +10,12 @@ find_package(PCL REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(Ceres REQUIRED)
 
+set(EXTRA_OPENCV_FILES "")
+if("${OpenCV_VERSION}" VERSION_LESS "4.6.0")
+  set(EXTRA_OPENCV_FILES "sift/sift.cpp")
+  add_definitions("-DEXTRA_SIFT_FILES")
+endif()
+
 include_directories(SYSTEM ${PCL_INCLUDE_DIRS}) # SYSTEM disables warnings
 include_directories(${EIGEN3_INCLUDE_DIRS})
 link_directories(${PCL_LIBRARY_DIRS})
@@ -26,10 +32,17 @@ add_library(pallet_detection_lib SHARED
   src/pallet_detection_solver.cpp
   src/boxes_to_pallet_description.cpp
   src/close_line_detection.cpp
+  
+  src/roll_pack_detection.cpp
+  src/roll_pack_detection_model.cpp
+  src/roll_pack_pose_model.cpp
+
+  ${EXTRA_OPENCV_FILES}
 )
 target_link_libraries(pallet_detection_lib
   opencv_highgui
   opencv_imgproc
+  opencv_video
   ${PCL_LIBRARIES}
   ${CERES_LIBRARIES}
 )
