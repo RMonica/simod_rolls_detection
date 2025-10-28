@@ -4,17 +4,25 @@ project(simod_rolls_detection)
 add_subdirectory(pallet_detection)
 
 find_package(catkin REQUIRED COMPONENTS
+roscpp
+  roslib
   sensor_msgs
-  roscpp
-  tf2_ros
-  visualization_msgs
+  std_msgs
+  std_srvs
   geometry_msgs
-  cv_bridge
+  visualization_msgs
+  tf
+  tf_conversions
+  tf2_ros
   tf2_eigen
   eigen_conversions
   actionlib
   actionlib_msgs
   message_generation
+  controller_manager_msgs
+  ur_msgs
+  ima_planner
+  cv_bridge
 )
 
 find_package(PCL REQUIRED)
@@ -35,11 +43,23 @@ generate_messages(
   DEPENDENCIES actionlib_msgs std_msgs geometry_msgs
 )
 
+# catkin_package(
+# #  INCLUDE_DIRS include
+# #  LIBRARIES simod_rolls_detection
+# #  CATKIN_DEPENDS other_catkin_pkg
+# #  DEPENDS system_lib
+# )
+
+
 catkin_package(
-#  INCLUDE_DIRS include
-#  LIBRARIES simod_rolls_detection
-#  CATKIN_DEPENDS other_catkin_pkg
-#  DEPENDS system_lib
+  CATKIN_DEPENDS
+    roscpp roslib sensor_msgs std_msgs std_srvs geometry_msgs
+    visualization_msgs tf tf_conversions tf2_ros tf2_eigen eigen_conversions
+    actionlib actionlib_msgs message_runtime
+    controller_manager_msgs ur_msgs
+    ima_planner
+    cv_bridge
+  # PCL/OpenCV/Ceres sono system libs -> non in CATKIN_DEPENDS
 )
 
 ###########
@@ -48,6 +68,8 @@ catkin_package(
 
 include_directories(
   pallet_detection/src
+  include
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/simod_rolls_detection
   ${catkin_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
@@ -66,6 +88,7 @@ target_link_libraries(pallet_detection_node
   ${OpenCV_LIBRARIES}
   ${CERES_LIBRARIES}
   pallet_detection_lib
+  jsoncpp
 )
 
 add_executable(close_line_detection_node 
@@ -80,6 +103,7 @@ target_link_libraries(close_line_detection_node
   ${OpenCV_LIBRARIES}
   ${CERES_LIBRARIES}
   pallet_detection_lib
+  jsoncpp
 )
 
 add_executable(pallet_detection_test 
@@ -91,6 +115,7 @@ add_dependencies(pallet_detection_test ${${PROJECT_NAME}_EXPORTED_TARGETS} ${cat
 target_link_libraries(pallet_detection_test
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
+  jsoncpp
 )
 
 add_executable(close_line_detection_test 
@@ -102,6 +127,7 @@ add_dependencies(close_line_detection_test ${${PROJECT_NAME}_EXPORTED_TARGETS} $
 target_link_libraries(close_line_detection_test
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
+  jsoncpp
 )
 
 add_executable(roll_pack_detection_node
@@ -138,15 +164,44 @@ target_link_libraries(save_images
   ${OpenCV_LIBRARIES}
 )
 
+
+
+add_executable(simod_vision_ctrl_node
+  src/simod_vision_ctrl_node.cpp
+  src/simod_vision_ctrl.cpp
+  src/ur_cobot.cpp
+  src/ur_cobot_utils.cpp
+  src/utils_rot.cpp
+  src/filters.cpp
+)
+add_dependencies(simod_vision_ctrl_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(simod_vision_ctrl_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  jsoncpp
+)
 #############
 ## Install ##
 #############
 
-install(TARGETS pallet_detection_node
+# install(TARGETS pallet_detection_node
+#   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+# )
+
+# install(TARGETS save_images
+#   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+# )
+
+install(TARGETS
+  pallet_detection_node
+  close_line_detection_node
+  simod_vision_ctrl_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
-install(TARGETS save_images
+install(TARGETS
+  save_images
+  pallet_detection_test
+  close_line_detection_test
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
-

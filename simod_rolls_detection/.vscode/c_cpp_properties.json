@@ -1,0 +1,51 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/fbrasina/catkin_ws/devel/include/**",
+        "/opt/ros/noetic/include/**",
+        "/home/fbrasina/catkin_ws/src/beginner_tutorials/include/**",
+        "/home/fbrasina/catkin_ws/src/moveit/moveit_planners/chomp/chomp_motion_planner/include/**",
+        "/home/fbrasina/catkin_ws/src/dynamic_planner/include/**",
+        "/home/fbrasina/catkin_ws/src/ima_planner/include/**",
+        "/home/fbrasina/catkin_ws/src/irma_impedance_ctrl/include/**",
+        "/home/fbrasina/catkin_ws/src/irma_xmlrpc_wrapper/include/**",
+        "/home/fbrasina/catkin_ws/src/moveit/moveit_planners/chomp/chomp_interface/include/**",
+        "/home/fbrasina/catkin_ws/src/moveit/moveit_ros/benchmarks/include/**",
+        "/home/fbrasina/catkin_ws/src/moveit/moveit_plugins/moveit_ros_control_interface/include/**",
+        "/home/fbrasina/catkin_ws/src/moveit/moveit_ros/move_group/include/**",
+        "/home/fbrasina/catkin_ws/src/moveit/moveit_ros/occupancy_map_monitor/include/**",
+        "/home/fbrasina/catkin_ws/src/moveit/moveit_ros/robot_interaction/include/**",
+        "/home/fbrasina/catkin_ws/src/moveit/moveit_ros/moveit_servo/include/**",
+        "/home/fbrasina/catkin_ws/src/moveit/moveit_setup_assistant/include/**",
+        "/home/fbrasina/catkin_ws/src/moveit/moveit_plugins/moveit_simple_controller_manager/include/**",
+        "/home/fbrasina/catkin_ws/src/myviz_package/include/**",
+        "/home/fbrasina/catkin_ws/src/moveit/moveit_planners/pilz_industrial_motion_planner/include/**",
+        "/home/fbrasina/catkin_ws/src/moveit/moveit_planners/pilz_industrial_motion_planner_testutils/include/**",
+        "/home/fbrasina/catkin_ws/src/rossini_mission_manager/include/**",
+        "/home/fbrasina/catkin_ws/src/rqt_gui_test_cpp/include/**",
+        "/home/fbrasina/catkin_ws/src/simple_gui_test/include/**",
+        "/home/fbrasina/catkin_ws/src/geometry2/tf2/include/**",
+        "/home/fbrasina/catkin_ws/src/geometry2/tf2_bullet/include/**",
+        "/home/fbrasina/catkin_ws/src/geometry2/tf2_eigen/include/**",
+        "/home/fbrasina/catkin_ws/src/geometry2/tf2_geometry_msgs/include/**",
+        "/home/fbrasina/catkin_ws/src/geometry2/tf2_kdl/include/**",
+        "/home/fbrasina/catkin_ws/src/geometry2/tf2_msgs/include/**",
+        "/home/fbrasina/catkin_ws/src/geometry2/tf2_ros/include/**",
+        "/home/fbrasina/catkin_ws/src/geometry2/tf2_sensor_msgs/include/**",
+        "/home/fbrasina/catkin_ws/src/universal_robot/ur_kinematics/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}

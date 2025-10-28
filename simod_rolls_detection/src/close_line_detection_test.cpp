@@ -1,5 +1,6 @@
 // ROS
 #include <ros/ros.h>
+#include <ros/package.h>  
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/Image.h>
 #include <cv_bridge/cv_bridge.h>
@@ -13,10 +14,13 @@
 
 // STL
 #include <fstream>
+#include <sstream>
 #include <stdint.h>
 #include <vector>
 #include <cmath>
 #include <memory>
+#include <string>
+#include <cstdlib>  
 
 #include <simod_rolls_detection/DetectCloseLineAction.h>
 
@@ -26,10 +30,8 @@ typedef sensor_msgs::CameraInfo CameraInfoMsg;
 
 class CloseLineDetectionTest
 {
-  public:
-
+public:
   typedef actionlib::SimpleActionClient<simod_rolls_detection::DetectCloseLineAction> ActionClient;
-
   typedef geometry_msgs::TransformStamped TransformStampedMsg;
 
   template <typename T> static T SQR(const T & t) {return t * t; }
@@ -50,7 +52,7 @@ class CloseLineDetectionTest
 
     m_nodeptr->param<bool>("use_real_camera", m_use_real_camera, false);
 
-    m_nodeptr->param<double>("layer_height", m_layer_height, 0.0f);
+    m_nodeptr->param<double>("layer_height", m_layer_height, 0.0);
 
     m_nodeptr->param<double>("initial_guess_x", m_initial_guess_x, 0.0);
     m_nodeptr->param<double>("initial_guess_y", m_initial_guess_y, 0.0);
@@ -62,11 +64,15 @@ class CloseLineDetectionTest
 
     m_nodeptr->param<std::string>("rgb_image_topic", m_rgb_image_topic, "rgb_image_topic");
     m_nodeptr->param<std::string>("camera_info_topic", m_camera_info_topic, "camera_info_topic");
-    m_rgb_image_pub = nodeptr->advertise<sensor_msgs::Image>(m_rgb_image_topic, 1);
+    m_rgb_image_pub   = nodeptr->advertise<sensor_msgs::Image>(m_rgb_image_topic, 1);
     m_camera_info_pub = nodeptr->advertise<sensor_msgs::CameraInfo>(m_camera_info_topic, 1);
 
     m_nodeptr->param<std::string>("world_frame_id", m_world_frame_id, "map");
     m_nodeptr->param<std::string>("camera_frame_id", m_camera_frame_id, "camera");
+
+    std::string default_folder = ros::package::getPath("simod_rolls_detection") + "/pose_logs";
+    m_nodeptr->param<std::string>("save_folder", m_save_folder, default_folder);
+    m_nodeptr->param<std::string>("save_prefix", m_save_prefix, std::string("close_line_points"));
 
     m_tf_broadcaster = std::make_shared<tf2_ros::TransformBroadcaster>();
   }
@@ -149,6 +155,36 @@ class CloseLineDetectionTest
     if (!file)
       return false;
     return true;
+  }
+
+  
+  std::string SavePointsCSV(const std::vector<geometry_msgs::Point>& pts,
+                            const std::string& frame_id)
+  {
+    
+    std::string mkdir_cmd = "mkdir -p \"" + m_save_folder + "\"";
+    std::system(mkdir_cmd.c_str());
+
+    std::ostringstream oss;
+    oss << m_save_folder << "/" << m_save_prefix << "_" << ros::Time::now().toNSec() << ".csv";
+    std::string filename = oss.str();
+
+    std::ofstream out(filename);
+    if (!out)
+    {
+      ROS_ERROR("close_line_detection_test: cannot open output file: %s", filename.c_str());
+      return std::string();
+    }
+
+    out << "# frame," << frame_id << "\n";
+    out << "# stamp," << ros::Time::now().toSec() << "\n";
+    out << "index,x,y,z\n";
+    for (size_t i = 0; i < pts.size(); ++i)
+    {
+      out << i << "," << pts[i].x << "," << pts[i].y << "," << pts[i].z << "\n";
+    }
+    out.close();
+    return filename;
   }
 
   void Run()
@@ -239,6 +275,10 @@ class CloseLineDetectionTest
 
     ROS_INFO("close_line_detection_test: received: %d points.", int(result.points.size()));
 
+    std::string saved = SavePointsCSV(result.points, m_world_frame_id);
+    if (!saved.empty())
+      ROS_INFO("close_line_detection_test: saved %zu points to %s", result.points.size(), saved.c_str());
+
     // publishing to TF for visualization
     int increment = 0;
     for (const geometry_msgs::Point & pt : result.points)
@@ -271,7 +311,7 @@ class CloseLineDetectionTest
     pub.publish(img);
   }
 
-  private:
+private:
   std::shared_ptr<Node> m_nodeptr;
 
   ros::Publisher m_rgb_image_pub;
@@ -289,6 +329,9 @@ class CloseLineDetectionTest
 
   std::string m_world_frame_id;
   std::string m_camera_frame_id;
+
+  std::string m_save_folder;
+  std::string m_save_prefix;
 
   tf2_ros::Buffer m_tf_buffer;
   tf2_ros::TransformListener m_tf_listener;
@@ -314,5 +357,5 @@ int main(int argc, char **argv)
   CloseLineDetectionTest pd(nodeptr);
   ros::spin();
 
-	return 0;
+  return 0;
 }

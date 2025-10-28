@@ -1,4 +1,4 @@
 center   0.0 0.0 0.0
 size     4.0 4.0 3.0
-rotation 0.0
-floor    -0.35
+rotation -1.5708
+floor    -0.050

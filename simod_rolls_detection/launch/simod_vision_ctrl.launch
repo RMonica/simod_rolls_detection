@@ -1,0 +1,122 @@
+<launch>
+
+  <arg name="use_real_camera" default="true"/>
+  <arg name="image_id" default="0"/>
+  <arg name="folder" default="oak_d_pallet_detect"/>
+  <arg name="output_dir"     default="$(find simod_rolls_detection)/files/output"/>
+  
+  <include file="$(find simod_camera)/launch/oak_d_pro.launch" if="$(arg use_real_camera)"/>
+
+  <!-- ======= PALLET DETECTION NODE ======= -->
+  <node pkg="simod_rolls_detection" type="pallet_detection_node" name="pallet_detection_node" output="screen">
+    <!-- Camera topics -->
+    <param name="depth_image_topic" type="string" value="/oak/stereo/image_raw"/>
+    <param name="rgb_image_topic"   type="string" value="/oak/rgb/image_raw"/>
+    <param name="camera_info_topic" type="string" value="/oak/stereo/camera_info"/>
+
+    <param name="discard_first_camera_frames" type="int" value="10"/>
+
+    <!-- Parametri detection -->
+    <param name="depth_hough_threshold"      type="int"    value="200"/>
+    <param name="depth_hough_min_length"     type="double" value="100"/>
+    <param name="depth_hough_max_gap"        type="double" value="50"/>
+
+    <param name="min_plane_camera_distance"  type="double" value="0.4"/>
+    <param name="vertical_line_angle_tolerance" type="double" value="$(eval 3.14 / 10)"/>
+
+    <param name="ransac_plane_angle_tolerance"   type="double" value="$(eval 5.0 / 180.0 * 3.14)"/>
+    <param name="ransac_plane_distance_tolerance" type="double" value="0.025"/>
+    <param name="ransac_plane_inliers_tolerance"  type="double" value="0.08"/>
+
+    <param name="plane_camera_max_angle"         type="double" value="$(eval 60.0 / 180.0 * 3.14)"/>
+
+    <param name="depth_image_max_discontinuity_th" type="double" value="0.1"/>
+    <param name="depth_image_max_vertical_angle"   type="double" value="$(eval 80 / 180.0 * 3.14)"/>
+    <param name="depth_image_normal_window"        type="int"    value="4"/>
+    <param name="depth_image_closing_window"       type="int"    value="10"/>
+
+    <param name="min_cluster_points_at_1m"  type="double" value="100000"/>
+    <param name="min_cluster_points"        type="int"    value="40000"/>
+
+    <param name="pillars_merge_threshold"   type="double" value="0.05"/>
+
+    <param name="planes_similarity_max_angle"   type="double" value="$(eval 10.0 / 180 * 3.14)"/>
+    <param name="planes_similarity_max_distance" type="double" value="0.1"/>
+    <param name="points_similarity_max_distance" type="double" value="0.1"/>
+
+    <param name="max_pose_correction_angle"    type="double" value="$(eval 3.0 / 4.0 * 3.14)"/>
+    <param name="max_pose_correction_distance" type="double" value="2.0"/>
+
+    <param name="plane_ransac_iterations" type="int"    value="2000"/>
+    <param name="plane_ransac_max_error"  type="double" value="0.1"/>
+
+    <!-- Frame + Service + Output -->
+    <param name="world_frame_id"           type="string" value="plate_center"/>
+    <param name="tf_camera_frame" type="string" value="arm2_camera_oak_d_pro" />
+    <param name="tf_base_frame" type="string" value="plate_center" />
+    <param name="pallet_detect_srv"        type="string" value="/detect_pallet"/>
+    <param name="box_pose_json_path"       type="string" value="$(arg output_dir)/box0_in_plate_center.json"/>
+    <param name="initial_guess_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/initial_guess_$(arg image_id).txt" />
+    <param name="expected_pallet_filename" type="string" value="$(find simod_rolls_detection)/data/oak_d_pallet_detect/expected_pallet_0.txt" />
+   
+  </node>
+
+  <!-- ======= CLOSE LINE DETECTION NODE ======= -->
+  <node pkg="simod_rolls_detection" type="close_line_detection_node" name="close_line_detection_node" output="screen">
+    <!-- Frames -->
+    <param name="world_frame_id"  type="string" value="plate_center"/>
+    <param name="camera_frame_id" type="string" value="arm2_camera_oak_d_pro"/>
+
+    <!-- Camera topics -->
+    <param name="rgb_image_topic"    type="string" value="/oak/rgb/image_raw"/>
+    <param name="camera_info_topic"  type="string" value="/oak/rgb/camera_info"/>
+
+    <param name="discard_first_camera_frames" type="int"   value="0"/>
+
+    <!-- z of the top layer in world coordinates -->
+    <param name="layer_height" type="double" value="0.05" />
+    
+    <param name="initial_guess_x" type="double" value="1.57" />
+    <param name="initial_guess_y" type="double" value="-0.11" />    
+    <param name="initial_guess_window_size_x" type="double" value="0.2" />
+    <param name="initial_guess_window_size_y" type="double" value="1.0" />
+
+    <!-- Parametri algoritmo -->
+    <param name="mode_basic"     type="bool"   value="false"/>
+    <param name="roll_diameter"  type="double" value="0.11"/>
+
+    <!-- Service + Output -->
+    <param name="close_line_detect_srv"       type="string" value="/detect_close_line"/>
+    <param name="close_line_points_json_path" type="string" value="$(arg output_dir)/close_line_points.json"/>
+  </node>
+
+    <!-- ======= SIMOD VISION CONTROLLER ======= -->
+  <node pkg="simod_rolls_detection" type="simod_vision_ctrl_node" name="simod_vision_ctrl" output="screen">
+
+    <rosparam ns="/simod_vision_ctrl" command="load" file="$(find simod_rolls_detection)/config/centralized_settings.yaml"/>
+    <rosparam ns="/simod_vision_ctrl" command="load" file="$(find dual_arm_description)/config/description/joint_limits_urdf.yaml"/>
+
+    <rosparam ns="/simod_vision_ctrl/arm2" command="load" file="$(find dual_arm_description)/config/description/ur10e_2_kinematics_calibration.yaml"/>
+    <rosparam ns="/simod_vision_ctrl/arm2" command="load" file="$(find dual_arm_description)/config/tools/ur10_2_tool.yaml"/>
+
+    <param name="rate"                value="500"/>
+    <param name="world_frame_id"      value="plate_center"/>
+    <param name="camera_frame_id"     value="arm2_camera_oak_d_pro"/>
+    <param name="tf_base_frame"       value="plate_center"/>
+
+    <param name="vision_views_json"   value="$(find simod_rolls_detection)/files/input/vision_poses.json"/>
+
+    <param name="box_pose_json_path"  value="$(arg output_dir)/box0_in_plate_center.json"/>
+    <param name="line_json_save_path" value="$(arg output_dir)/close_line_points.json"/>
+
+    <param name="pallet_detect_srv"    value="/detect_pallet"/>
+    <param name="closeline_detect_srv" value="/detect_close_line"/>
+
+    <param name="output_dir"           value="$(arg output_dir)"/>
+    <param name="box_pose_out_file"    value="$(arg output_dir)/box_pose_out.json"/>
+    <param name="close_line_out_file"  value="$(arg output_dir)/close_line_out.json"/>
+
+  </node>
+
+
+</launch>

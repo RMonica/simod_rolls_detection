@@ -5,23 +5,45 @@
   <description>The simod_rolls_detection package</description>
 
   <maintainer email="rimlab@todo.todo">rimlab</maintainer>
-
   <license>TODO</license>
 
   <buildtool_depend>catkin</buildtool_depend>
-  <depend>sensor_msgs</depend>
+
+  <!-- catkin deps -->
   <depend>roscpp</depend>
-  <depend>tf2_ros</depend>
+  <depend>roslib</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>geometry_msgs</depend>
   <depend>visualization_msgs</depend>
-  <depend>cv_bridge</depend>
+  <depend>tf</depend>
+  <depend>tf_conversions</depend>
+  <depend>tf2_ros</depend>
   <depend>tf2_eigen</depend>
   <depend>eigen_conversions</depend>
   <depend>actionlib</depend>
   <depend>actionlib_msgs</depend>
-  <depend>message_generation</depend>
-  <depend>geometry_msgs</depend>
+  <build_depend>message_generation</build_depend>
+  <exec_depend>message_runtime</exec_depend>
 
-  <export>
+  <depend>controller_manager_msgs</depend>
+  <depend>ur_msgs</depend>
+  <depend>ima_planner</depend>
+  <depend>cv_bridge</depend> 
 
-  </export>
+  <!-- system libs via rosdep -->
+  <build_depend>libpcl-all-dev</build_depend>
+  <exec_depend>libpcl-all</exec_depend>
+
+  <build_depend>libopencv-dev</build_depend>
+  <exec_depend>libopencv-dev</exec_depend>
+
+  <build_depend>libceres-dev</build_depend>
+  <exec_depend>libceres-dev</exec_depend>
+
+  <build_depend>libjsoncpp-dev</build_depend>
+  <exec_depend>libjsoncpp-dev</exec_depend>
+
+  <export/>
 </package>
