@@ -1,0 +1,17 @@
+simod_vision_ctrl:
+ 
+  rate: 500 # [Hz]
+  
+  world_frame_id: plate_center         
+  camera_frame_id: arm1_camera_oak_d_pro 
+  arm1_base_name: arm1_base            
+  arm1_EE_name:   arm1_tcp              
+
+  
+  arm1_base_in_world:
+    x:    0.535763
+    y:   -0.284
+    z:    0.03473
+    roll: 0.0
+    pitch: 0.261799
+    yaw:   1.57079632679

@@ -46,14 +46,14 @@
     <param name="plane_ransac_max_error" type="double" value="0.1" />
     
     <param name="world_frame_id" type="string" value="plate_center" />
-    <param name="tf_camera_frame" type="string" value="arm1_camera_oak_d_pro" />
+    <param name="tf_camera_frame" type="string" value="arm2_camera_oak_d_pro" />
     <param name="tf_base_frame" type="string" value="plate_center" />
   </node>
 
   <node pkg="simod_rolls_detection" type="pallet_detection_test" name="pallet_detection_test" output="screen">
 
     <param name="world_frame_id" type="string" value="plate_center" />
-    <param name="camera_frame_id" type="string" value="arm1_camera_oak_d_pro" />
+    <param name="camera_frame_id" type="string" value="arm2_camera_oak_d_pro" />
 
     <param name="depth_image_topic" type="string" value="/oak/stereo/image_raw" />
     <param name="rgb_image_topic" type="string" value="/oak/rgb/image_raw" />
@@ -68,7 +68,7 @@
     <param name="camera_pose_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/pose$(arg image_id).txt" />
     <param name="initial_guess_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/initial_guess_$(arg image_id).txt" />
     
-    <param name="tf_camera_frame" type="string" value="arm1_camera_oak_d_pro" />
+    <param name="tf_camera_frame" type="string" value="arm2_camera_oak_d_pro" />
     <param name="tf_base_frame" type="string" value="plate_center" />
   </node>
 

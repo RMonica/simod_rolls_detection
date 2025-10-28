@@ -1,8 +1,11 @@
 <launch>
   <arg name="image_id" default="0"/>
-  <arg name="use_real_camera" default="false" />
+  <arg name="use_real_camera" default="true" />
 
   <node pkg="simod_rolls_detection" type="close_line_detection_node" name="close_line_detection_node" output="screen">
+
+    <param name="world_frame_id" type="string" value="plate_center" />
+    <param name="camera_frame_id" type="string" value="arm2_camera_oak_d_pro" />
 
     <param name="rgb_image_topic" type="string" value="/oak/rgb/image_raw" />
     <param name="camera_info_topic" type="string" value="/oak/rgb/camera_info" />
@@ -17,8 +20,9 @@
 
   <node pkg="simod_rolls_detection" type="close_line_detection_test" name="close_line_detection_test" output="screen">
 
-    <param name="world_frame_id" type="string" value="map" />
-    <param name="camera_frame_id" type="string" value="camera" />
+    <param name="world_frame_id" type="string" value="plate_center" />
+    <param name="camera_frame_id" type="string" value="arm2_camera_oak_d_pro" />
+
 
     <param name="rgb_image_topic" type="string" value="/oak/rgb/image_raw" />
     <param name="camera_info_topic" type="string" value="/oak/rgb/camera_info" />
@@ -28,15 +32,21 @@
     <param name="rgb_filename" type="string" value="$(find simod_rolls_detection)/data/bologna_29-07-25/Test Camera 29-07-25 Superiori Inclinate/image$(arg image_id).png" />
     <param name="camera_info_filename" type="string" value="$(find simod_rolls_detection)/data/bologna_29-07-25/Test Camera 29-07-25 Superiori Inclinate/camerainfo$(arg image_id).txt" />
     <param name="camera_pose_filename" type="string" value="$(find simod_rolls_detection)/data/bologna_29-07-25/Test Camera 29-07-25 Superiori Inclinate/pose$(arg image_id).txt" />
-    <param name="layer_height" type="double" value="0.0" />      <!-- z of the top layer in world coordinates -->
-    <param name="initial_guess_y" type="double" value="0.8" /> <!-- initial guess y of the line in world coordinates -->
-    <param name="initial_guess_y" type="double" value="0.85" if="$(eval image_id == 3 or image_id == 4 or image_id == 5)" />
-    <param name="initial_guess_y" type="double" value="0.9" if="$(eval image_id == 0 or image_id == 1 or image_id == 11)" />
-    <param name="initial_guess_y" type="double" value="1.1" if="$(eval image_id == 2 or image_id == 10)" />
-   
-    <param name="initial_guess_x" type="double" value="0.0" />
-    <param name="initial_guess_window_size_x" type="double" value="1.0" />
-    <param name="initial_guess_window_size_y" type="double" value="0.2" />
+    <param name="layer_height" type="double" value="0.05" />
+    <!-- z of the top layer in world coordinates -->
+    <param name="initial_guess_y" type="double" value="-0.11" />
+    <!-- initial guess y of the line in world coordinates -->
+    <!-- <param name="initial_guess_y" type="double" value="0.85" if="$(eval image_id == 3 or image_id == 4 or image_id == 5)" />
+    <param name="initial_guess_y" type="double" value="1.6" if="$(eval image_id == 0 or image_id == 1 or image_id == 11)" />
+    <param name="initial_guess_y" type="double" value="1.6" if="$(eval image_id == 2 or image_id == 10)" /> -->
+
+    <param name="initial_guess_x" type="double" value="1.57" />
+    <param name="initial_guess_window_size_x" type="double" value="0.2" />
+    <param name="initial_guess_window_size_y" type="double" value="1.0" />
+
+    <param name="save_folder" type="string" value="$(find simod_rolls_detection)/pose_logs_line_detection"/>
+    <param name="save_prefix" type="string" value="close_line_points"/>
+
   </node>
 
   <include file="$(find simod_camera)/launch/oak_d_pro.launch" if="$(arg use_real_camera)" />

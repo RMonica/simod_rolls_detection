@@ -7,5 +7,21 @@
         "/home/fbrasina/catkin_ws/devel/lib/python3/dist-packages",
         "/opt/ros/noetic/lib/python3/dist-packages"
     ],
-    "cmake.sourceDirectory": "/home/fbrasina/catkin_ws/src/simod_rolls_detection/simod_camera"
+    "cmake.sourceDirectory": "/home/fbrasina/catkin_ws/src/simod_rolls_detection/simod_camera",
+    "files.associations": {
+        "fstream": "cpp",
+        "core": "cpp",
+        "numericaldiff": "cpp",
+        "specialfunctions": "cpp",
+        "hash_map": "cpp",
+        "hash_set": "cpp",
+        "deque": "cpp",
+        "forward_list": "cpp",
+        "list": "cpp",
+        "string": "cpp",
+        "vector": "cpp",
+        "rope": "cpp",
+        "slist": "cpp",
+        "valarray": "cpp"
+    }
 }

@@ -287,3 +287,136 @@ After the execution of the action, the `close_line_detection_test` publishes all
 - `use_real_camera`: see above.
 - `layer_height`: see the `layer_z` field in the action.
 - `initial_guess_y`, `initial_guess_window_size_y`, `initial_guess_x`, `initial_guess_window_size_x`: see the corresponding parameters in the action.
+
+
+
+SIMOD VISION CTRL
+--------------------
+
+### Simod vision ctrl node
+
+The `simod_vision_ctrl_node` coordinates the UR2 cobot and the vision pipeline. It automatically executes the following sequence:
+
+1. Move UR2 to predefined "homing" pose.
+2. Move UR2 to a "pallet view" pose where the pallet is visible.
+3. Call the pallet detection service to estiamte the pallet/box pose.
+4. Save that pose.
+5. Compute a "close detection" pose in front of the top layer.
+6. Move UR2 to that pose.
+7. Call the close line detection service to extract the separation line between the two rolls packs.
+8. Read the detected line points, pick the most relevant one and save it.
+9. Finish.
+
+**Inputs**
+- A set of predefined "view poses" (homing, pallet view, close view offset) from a JSON file.
+- The output JSONs produced by the perception nodes:
+    - `pallet_detection_node` writes the estiamted pallet/box pose.
+    - `close_line_detection_node` writes the detected lines points.
+- Two services exposed by the perception nodes:
+    - `/detect_pallet` (std_srvs/Trigger): run pallet detection.
+    - `/detect_close_line` (std_srvs/Trigger): run close-line detection.
+- TF transforms: base/world frame (`plate_center` in our setup).
+TF transforms:
+
+
+**Outputs**
+
+- Robot motion: the node commands UR2 to move to specific task poses using the planner.
+
+- `box_pose_out.json`: normalized pose of the detected box in the world frame.
+
+- `close_line_out.json`: a single 3D point on the separation line, chosen from the detected polyline.
+
+
+**State Machine**
+
+`simod_vision_ctrl` runs an internal finite-state machine. Each cycle it checks the current state and advances when the previous action is complete:
+
+1. **MOVE_TO_HOMING** Sends UR2 to a predefined homing pose.
+
+2. **MOVE_TO_PALLET_VIEW** Sends UR2 to a predefined pallet inspection pose.
+
+3. **DETECT_PALLET** Calls /detect_pallet.
+The pallet detection node estimates the pallet/box pose and writes it to disk (e.g. box0_in_plate_center.json).
+
+4. **LOAD_AND_SAVE_BOX_POSE** Loads that box pose from file, converts it into a standard {position + rpy + frame_id} format, and writes it to box_pose_out.json.
+
+5. **COMPUTE_CLOSE_VIEW** Computes a "close inspection" pose by applying a fixed offset (roll/pitch/yaw + XYZ) to the detected box pose.
+This gives a camera viewpoint over the top layer.
+
+6. **MOVE_TO_CLOSE_VIEW** Moves UR2 to that close inspection pose.
+
+7. **DETECT_CLOSE_LINE** Calls /detect_close_line.
+The close-line node writes all detected 3D points of the separation line to disk (e.g. close_line_points.json).
+simod_vision_ctrl reads those points (in plate_center), picks the point with |y| closest to 0 (i.e. most central), and writes only that "best point" to close_line_out.json.
+
+8. **DONE** The mission is complete.
+
+This loop is driven from spinner(), which is expected to be called regularly at the node rate.
+
+**URCobot helper**
+
+Internally, simod_vision_ctrl talks to a helper class called URCobot, which wraps UR2 control.
+
+**Parameters**
+
+All parameters for this node live under the simod_vision_ctrl namespace in the launch file.
+
+Key ones:
+
+rate (double): main loop frequency in Hz.
+
+- `world_frame_id`: name of the world / base frame.
+In the current setup: "plate_center".
+
+- `camera_frame_id`: the camera TF frame mounted on UR2.
+In the current setup: "arm2_camera_oak_d_pro".
+
+- `tf_base_frame`: frame used as base for transforms. Often same as world_frame_id.
+
+- `vision_views_json`: path to a JSON file that defines task poses for this robot.
+   Expected structure:
+   ```json
+    {
+    "vision": {
+        "ur2": {
+        "homing":         [x, y, z, roll, pitch, yaw],
+        "pallet_view":    [x, y, z, roll, pitch, yaw],
+        "close_line_view":[x, y, z, roll, pitch, yaw]
+        }
+    }
+    }
+    ```
+- `box_pose_json_path` (string): path to the box pose estimation written by pallet detection (input to us).
+
+- `line_json_save_path` (string): path to the detected line points written by the close-line node (input to us).
+
+- `pallet_detect_srv` (string): name of the service to trigger pallet detection.
+
+- `closeline_detect_srv` (string): name of the service to trigger close-line detection.
+
+- `output_dir` (string): directory where final results are stored.
+
+- `box_pose_out_file` (string): output file where we save the normalized box pose.
+
+- `close_line_out_file` (string): output file where we save the single selected line point.
+
+**Output files format**
+
+- `box_pose_out.json`
+   Pose of the detected box in `world_frame_id`, saved in a simple `{position + rpy}` layout:
+    ```json
+    {
+    "frame_id": "plate_center",
+    "position": { "x": ..., "y": ..., "z": ... },
+    "rpy":      { "roll": ..., "pitch": ..., "yaw": ... }
+    }
+    ```
+- `close_line_out.json`
+   Single "best" point on the detected separation line (again in `world_frame_id`):
+    ```json
+    {
+    "frame_id": "plate_center",
+    "point": { "x": ..., "y": ..., "z": ... }
+    }
+    ```

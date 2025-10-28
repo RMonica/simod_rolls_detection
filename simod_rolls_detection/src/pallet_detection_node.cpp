@@ -10,6 +10,10 @@
 #include <actionlib/server/simple_action_server.h>
 #include <tf/transform_datatypes.h>
 
+#include <std_srvs/Trigger.h>
+#include <jsoncpp/json/json.h>
+#include <limits>
+
 // OpenCV
 #include <opencv2/opencv.hpp>
 
@@ -21,6 +25,8 @@
 #include <cmath>
 #include <map>
 #include <mutex>
+#include <sstream>   // <-- NEW
+#include <algorithm> // <-- NEW
 
 // PCL
 #include <pcl/common/colors.h>
@@ -30,15 +36,17 @@
 
 #include <pallet_detection.h>
 
+// ===== TF2 includes =====
+#include <tf2_ros/transform_listener.h>
+#include <tf2_eigen/tf2_eigen.h>
+// ========================
+
 typedef ros::NodeHandle Node;
 typedef sensor_msgs::Image ImageMsg;
 typedef sensor_msgs::CameraInfo CameraInfoMsg;
 typedef sensor_msgs::PointCloud2 PointCloud2Msg;
 typedef visualization_msgs::Marker MarkerMsg;
 typedef visualization_msgs::MarkerArray MarkerArrayMsg;
-
-#include <ros/package.h> // assicurati che sia in cima al file
-
 
 class PalletDetectionNode
 {
@@ -89,11 +97,83 @@ public:
     return result;
   }
 
+  // ===== NEW: struct per initial guess e core detectOnce =====
+  struct InitialGuess {
+    Eigen::Vector3f center = Eigen::Vector3f(0,0,0);
+    Eigen::Vector3f size   = Eigen::Vector3f(1,1,1);
+    float rotation = 0.0f;
+    float floor_z  = 0.0f;
+  };
+
+  InitialGuess LoadInitialGuessFromFile(const std::string &path)
+  {
+    InitialGuess ig;
+    if (path.empty()) return ig;
+
+    std::ifstream is(path);
+    if (!is)
+    {
+      ROS_WARN("initial_guess file not found: %s (using defaults)", path.c_str());
+      return ig;
+    }
+    std::string line;
+    while (std::getline(is, line))
+    {
+      if (line.empty()) continue;
+      std::istringstream iss(line);
+      std::string tag; iss >> tag;
+      if (tag == "center")    iss >> ig.center.x() >> ig.center.y() >> ig.center.z();
+      else if (tag == "size") iss >> ig.size.x() >> ig.size.y() >> ig.size.z();
+      else if (tag == "rotation") iss >> ig.rotation;
+      else if (tag == "floor")    iss >> ig.floor_z;
+    }
+    return ig;
+  }
+
+  struct DetectInputs {
+    cv::Mat rgb, depth;
+    PalletDetection::CameraInfo cam;
+    Eigen::Affine3f T_wc;
+    float floor_z;
+    PalletDetection::BoundingBox guess;
+    std::string expected_file;
+  };
+
+  bool detectOnce(const DetectInputs& in,
+                  geometry_msgs::Pose& out_box0_pose,
+                  int* out_consensus = nullptr)
+  {
+    auto det = m_pallet_detection->Detect(
+        in.rgb, in.depth, in.cam, in.T_wc,
+        in.floor_z, in.guess, in.expected_file);
+
+    if (!det.success || det.boxes.empty())
+      return false;
+
+    // Seleziona "box_0" come quello più vicino alla posizione attesa in world
+    Eigen::Vector3d expected_box0(0.175, 0.0, 0.1);
+    double best = std::numeric_limits<double>::max();
+    Eigen::Affine3d bestPose;
+    bool found = false;
+
+    for (const auto& bx : det.boxes)
+    {
+      const double d = (bx.translation() - expected_box0).norm();
+      if (d < best) { best = d; bestPose = bx; found = true; }
+    }
+    if (!found) return false;
+
+    tf::poseEigenToMsg(bestPose, out_box0_pose);
+    if (out_consensus) *out_consensus = det.consensus;
+    return true;
+  }
+  // ============================================================
+
   PalletDetectionNode(std::shared_ptr<Node> nodeptr) : m_nodeptr(nodeptr)
   {
     PalletDetection::Config config;
 
-    m_nodeptr->param<std::string>("depth_image_topic", m_depth_image_topic, "camera_info_topic");
+    m_nodeptr->param<std::string>("depth_image_topic", m_depth_image_topic, "depth_image_topic");
     m_nodeptr->param<std::string>("rgb_image_topic", m_rgb_image_topic, "rgb_image_topic");
     m_nodeptr->param<std::string>("camera_info_topic", m_camera_info_topic, "camera_info_topic");
 
@@ -128,6 +208,18 @@ public:
     m_markers_pub = nodeptr->advertise<MarkerArrayMsg>("markers", 1);
 
     m_nodeptr->param<std::string>("world_frame_id", m_world_frame_id, "map");
+
+    // path del file che il controller leggerà (stesso nome del param nel tuo launch/controller)
+    m_nodeptr->param<std::string>("box_pose_json_path",
+                                  m_box_pose_json_path,
+                                  "files/output/box0_in_plate_center.json");
+
+    // service Trigger compatibile col controller (nome deve combaciare con simod_vision_ctrl/pallet_detect_srv)
+    std::string detect_pallet_srv_name;
+    m_nodeptr->param<std::string>("pallet_detect_srv", detect_pallet_srv_name, "/detect_pallet");
+    m_srv_detect_pallet = m_nodeptr->advertiseService(
+        detect_pallet_srv_name,
+        &PalletDetectionNode::onDetectPalletSrv, this);
 
     m_nodeptr->param<int>("depth_hough_threshold", config.depth_hough_threshold, 50);
     m_nodeptr->param<int>("depth_hough_min_length", config.depth_hough_min_length, 100);
@@ -169,6 +261,17 @@ public:
     m_nodeptr->param<double>("plane_ransac_max_error", config.plane_ransac_max_error, 0.1);
 
     m_nodeptr->param<int>("random_seed", config.random_seed, std::random_device()());
+
+    // altri paths/frames:
+    m_nodeptr->param<std::string>("initial_guess_filename", m_initial_guess_filename, "");
+    m_nodeptr->param<std::string>("expected_pallet_filename", m_expected_pallet_filename, "");
+    m_nodeptr->param<std::string>("camera_frame_id", m_camera_frame_id, "arm2_camera_oak_d_pro");
+    m_nodeptr->param<double>("floor_z", m_floor_z, 0.0);
+
+    ROS_INFO_STREAM("expected_pallet_filename = " << m_expected_pallet_filename);
+    ROS_INFO_STREAM("world_frame_id = " << m_world_frame_id
+                                        << ", camera_frame_id = " << m_camera_frame_id
+                                        << ", floor_z = " << m_floor_z);
 
     ROS_INFO_STREAM("pallet_detection_node: creating PalletDetection instance with config:\n"
                     << config.ToString());
@@ -217,7 +320,6 @@ public:
           if (!ros::ok())
             return;
         }
-
         if (!ros::ok())
           return;
       }
@@ -265,6 +367,7 @@ public:
       pose.linear() = Eigen::AngleAxisd(detection_result.pose.z(), Eigen::Vector3d::UnitZ()).matrix();
       tf::poseEigenToMsg(pose, result.pallet_pose);
     }
+
     for (uint64 box_i = 0; box_i < detection_result.boxes.size(); box_i++)
     {
       geometry_msgs::Pose box_pose;
@@ -272,51 +375,151 @@ public:
       result.box_poses.push_back(box_pose);
     }
 
-    // Attesa posizione nota del box_0 descritto nel file
-    Eigen::Vector3d expected_box0_position(0.175, 0.0, 0.1);
-
-    double min_dist = std::numeric_limits<double>::max();
-    geometry_msgs::Pose closest_box_pose;
-    bool found_box0 = false;
-
-    for (uint64 box_i = 0; box_i < detection_result.boxes.size(); box_i++)
+    // Log box_0 "più vicino" (solo info)
     {
-      Eigen::Vector3d current_pos = detection_result.boxes[box_i].translation();
-      double dist = (current_pos - expected_box0_position).norm();
+      Eigen::Vector3d expected_box0_position(0.175, 0.0, 0.1);
+      double min_dist = std::numeric_limits<double>::max();
+      geometry_msgs::Pose closest_box_pose;
+      bool found_box0 = false;
 
-      geometry_msgs::Pose box_pose;
-      tf::poseEigenToMsg(detection_result.boxes[box_i], box_pose);
-      result.box_poses.push_back(box_pose);
-
-      if (dist < min_dist)
+      for (uint64 box_i = 0; box_i < detection_result.boxes.size(); box_i++)
       {
-        min_dist = dist;
-        closest_box_pose = box_pose;
-        found_box0 = true;
+        Eigen::Vector3d current_pos = detection_result.boxes[box_i].translation();
+        double dist = (current_pos - expected_box0_position).norm();
+        if (dist < min_dist)
+        {
+          min_dist = dist;
+          tf::poseEigenToMsg(detection_result.boxes[box_i], closest_box_pose);
+          found_box0 = true;
+        }
       }
-    }
-
-    // Salvataggio CSV
-    if (found_box0)
-    {
-      std::string package_path = ros::package::getPath("simod_rolls_detection");
-      std::string logs_dir = package_path + "/pose_logs";
-
-      // Crea la directory se non esiste
-      mkdir(logs_dir.c_str(), 0775);
-
-      std::string save_path = logs_dir + "/box_0_pose.csv";
-      SaveBoxPoseToCSV(closest_box_pose, save_path, 0);
+      if (found_box0)
+      {
+        ROS_INFO_STREAM("closest box to expected position: dist=" << min_dist
+                                                                  << " pose=(" << closest_box_pose.position.x << ", "
+                                                                  << closest_box_pose.position.y << ", "
+                                                                  << closest_box_pose.position.z << ")");
+      }
     }
 
     ROS_INFO("pallet_detection_node: action end.");
     m_as->setSucceeded(result);
   }
 
+  // ========= Service: usa lo stesso core della pipeline =========
+  bool onDetectPalletSrv(std_srvs::Trigger::Request &, std_srvs::Trigger::Response &res)
+  {
+    // 1) Attendi immagini e camera info (come in Run)
+    cv::Mat rgb_image, depth_image;
+    std::shared_ptr<PalletDetection::CameraInfo> camera_info;
+    {
+      ros::Rate wait_rate(100);
+      std::unique_lock<std::mutex> lock(m_mutex);
+      for (int i = 0; i < m_discard_first_camera_frames + 1; i++)
+      {
+        m_last_rgb_image = cv::Mat();
+        m_last_depth_image = cv::Mat();
+        m_last_camera_info.reset();
+        while (m_last_rgb_image.empty() || m_last_depth_image.empty() || !m_last_camera_info)
+        {
+          lock.unlock();
+          ROS_INFO_THROTTLE(2.0, "pallet_detection_node: waiting for images...");
+          wait_rate.sleep();
+          lock.lock();
+          if (!ros::ok())
+          {
+            res.success = false; res.message = "shutdown";
+            return true;
+          }
+        }
+        if (!ros::ok())
+        {
+          res.success = false; res.message = "shutdown";
+          return true;
+        }
+      }
+      rgb_image = m_last_rgb_image;
+      depth_image = m_last_depth_image;
+      camera_info = m_last_camera_info;
+    }
+
+    // 2) T_wc da TF (world <- camera)
+    Eigen::Affine3d T_wc_d = Eigen::Affine3d::Identity();
+    try
+    {
+      const geometry_msgs::TransformStamped T =
+          tf_buffer_.lookupTransform(m_world_frame_id, m_camera_frame_id, ros::Time(0), ros::Duration(0.5));
+      T_wc_d = Eigen::Affine3d(tf2::transformToEigen(T).matrix());
+      const Eigen::Vector3d t = T_wc_d.translation();
+      Eigen::Vector3d z_axis = T_wc_d.linear().col(2);
+      double z_to_world_up = std::acos(std::max(-1.0, std::min(1.0, z_axis.dot(Eigen::Vector3d::UnitZ())))) * 180.0 / M_PI;
+      ROS_INFO("[pallet_detection_node] T_wc: t=[%.3f %.3f %.3f], angle(camZ vs worldZ)= %.1f deg",
+               t.x(), t.y(), t.z(), z_to_world_up);
+    }
+    catch (const tf2::TransformException &ex)
+    {
+      res.success = false;
+      res.message = std::string("TF lookup failed: ") + ex.what();
+      return true;
+    }
+
+    // 3) Initial guess dal FILE (stesso del test)
+    InitialGuess ig = LoadInitialGuessFromFile(m_initial_guess_filename);
+    ROS_INFO("IG: center=[%.3f %.3f %.3f] size=[%.3f %.3f %.3f] rot=%.4f floor=%.3f",
+         ig.center.x(), ig.center.y(), ig.center.z(),
+         ig.size.x(), ig.size.y(), ig.size.z(),
+         ig.rotation, ig.floor_z);
+
+    PalletDetection::BoundingBox guess;
+    guess.center   = ig.center;
+    guess.size     = ig.size;
+    guess.rotation = ig.rotation;
+    const float floor_z = ig.floor_z;   // come nello standalone
+
+    // 4) Prepara input e chiama il core
+    DetectInputs in;
+    in.rgb = rgb_image;
+    in.depth = depth_image;
+    in.cam = *camera_info;
+    in.T_wc = T_wc_d.cast<float>();
+    in.floor_z = floor_z;
+    in.guess = guess;
+    in.expected_file = m_expected_pallet_filename;
+
+    geometry_msgs::Pose box0_pose;
+    int consensus = 0;
+    bool ok = detectOnce(in, box0_pose, &consensus);
+
+    // (Opzionale) fallback con T_cw
+    // if (!ok) {
+    //   ROS_WARN("[pallet_detection_node] first try failed; retrying with inverse pose (T_cw).");
+    //   in.T_wc = T_wc_d.inverse().cast<float>();
+    //   ok = detectOnce(in, box0_pose, &consensus);
+    // }
+
+    if (!ok)
+    {
+      res.success = false;
+      res.message = "detection failed or no boxes";
+      return true;
+    }
+
+    if (!saveBoxPoseJson(box0_pose, m_world_frame_id, m_box_pose_json_path))
+    {
+      res.success = false;
+      res.message = "failed to write JSON: " + m_box_pose_json_path;
+      return true;
+    }
+
+    res.success = true;
+    res.message = "pallet detection OK (consensus=" + std::to_string(consensus) + "), box_0 saved to " + m_box_pose_json_path;
+    return true;
+  }
+  // =============================================================
+
   void DepthImageCallback(const sensor_msgs::Image &msg)
   {
     std::unique_lock<std::mutex> lock(m_mutex);
-
     try
     {
       cv_bridge::CvImageConstPtr cv_ptr = cv_bridge::toCvCopy(msg, "16UC1");
@@ -332,7 +535,6 @@ public:
   void RgbImageCallback(const sensor_msgs::Image &msg)
   {
     std::unique_lock<std::mutex> lock(m_mutex);
-
     try
     {
       cv_bridge::CvImageConstPtr cv_ptr = cv_bridge::toCvCopy(msg, "bgr8");
@@ -348,7 +550,6 @@ public:
   void CameraInfoCallback(const sensor_msgs::CameraInfo &msg)
   {
     std::unique_lock<std::mutex> lock(m_mutex);
-
     const float fx = msg.K[0];
     const float fy = msg.K[4];
     const float cx = msg.K[2];
@@ -594,30 +795,31 @@ public:
     pub.publish(img);
   }
 
-  void SaveBoxPoseToCSV(const geometry_msgs::Pose &pose, const std::string &filename, int box_id)
+  bool saveBoxPoseJson(const geometry_msgs::Pose &pose,
+                       const std::string &frame_id,
+                       const std::string &path)
   {
-    std::ofstream file(filename);
-    if (!file.is_open())
-    {
-      ROS_ERROR("SaveBoxPoseToCSV: Cannot open file %s", filename.c_str());
-      return;
-    }
-
     double roll, pitch, yaw;
     tf::Quaternion q(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
     tf::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
-    file << "box_id,x,y,z,roll,pitch,yaw\n";
-    file << "box_" << box_id << ","
-         << pose.position.x << ","
-         << pose.position.y << ","
-         << pose.position.z << ","
-         << roll << ","
-         << pitch << ","
-         << yaw << "\n";
+    Json::Value j;
+    j["frame_id"] = frame_id;
+    j["translation"]["x"] = pose.position.x;
+    j["translation"]["y"] = pose.position.y;
+    j["translation"]["z"] = pose.position.z;
+    j["rotation"]["roll"] = roll;
+    j["rotation"]["pitch"] = pitch;
+    j["rotation"]["yaw"] = yaw;
 
-    file.close();
-    ROS_INFO("Pose of box_%d saved to %s", box_id, filename.c_str());
+    std::ofstream ofs(path);
+    if (!ofs.is_open())
+    {
+      ROS_ERROR("saveBoxPoseJson: cannot open '%s'", path.c_str());
+      return false;
+    }
+    ofs << j.toStyledString();
+    return true;
   }
 
 private:
@@ -636,8 +838,6 @@ private:
   ros::Subscriber m_depth_image_sub;
   ros::Subscriber m_camera_info_sub;
 
-  std::string m_world_frame_id;
-
   std::shared_ptr<ActionServer> m_as;
 
   std::string m_depth_image_topic;
@@ -655,16 +855,34 @@ private:
   int m_discard_first_camera_frames;
 
   PalletDetection::Ptr m_pallet_detection;
+
+  // service + param per integrazione con il controller
+  ros::ServiceServer m_srv_detect_pallet;
+  std::string m_world_frame_id;     // frame mondo (es. "plate_center")
+  std::string m_box_pose_json_path; // dove salvare il JSON del box_0
+
+  // paths/frames
+  std::string m_initial_guess_filename;
+  std::string m_expected_pallet_filename;
+  std::string m_camera_frame_id;
+  double m_floor_z = 0.0;
+
+  // TF2 buffer + listener (ordine dichiarazione IMPORTANTE)
+  tf2_ros::Buffer tf_buffer_;
+  tf2_ros::TransformListener tf_listener_{tf_buffer_};
 };
 
+// --- main ---
 int main(int argc, char **argv)
 {
-  ros::init(argc, argv, "pallet detection");
+  ros::init(argc, argv, "pallet_detection");
   std::shared_ptr<Node> nodeptr(new Node("~"));
   ROS_INFO("pallet_detection node started");
 
   PalletDetectionNode pd(nodeptr);
-  ros::spin();
 
+  ros::AsyncSpinner spinner(2);
+  spinner.start();
+  ros::waitForShutdown();
   return 0;
 }
