@@ -1,0 +1,47 @@
+<launch>
+  <!-- 0 2 3 5 7 8 9 -->
+  <arg name="image_id" default="2"/>
+  <arg name="folder" default="bologna_29-07-25/Test Camera 29-07-25 Frontali"/>
+  <arg name="use_real_camera" default="false" />
+
+  <node pkg="simod_rolls_detection" type="roll_pack_detection_node" name="roll_pack_detection_node" output="screen">
+
+    <param name="depth_image_topic" type="string" value="/oak/stereo/image_raw" />
+    <param name="rgb_image_topic" type="string" value="/oak/rgb/image_raw" />
+    <param name="camera_info_topic" type="string" value="/oak/stereo/camera_info" />
+
+    <param name="detect_packs_action" type="string" value="/detect_packs_action" />
+
+    <!-- increase this if first camera frames are bad for some reason -->
+    <param name="discard_first_camera_frames" type="int" value="0" />
+
+    <param name="ransac_iterations" type="int" value="200000" />
+
+    <param name="no_depth" type="bool" value="false" />
+
+  </node>
+
+  <node pkg="simod_rolls_detection" type="roll_pack_detection_test" name="roll_pack_detection_test" output="screen">
+
+    <param name="world_frame_id" type="string" value="map" />
+    <param name="camera_frame_id" type="string" value="camera" />
+
+    <param name="depth_image_topic" type="string" value="/oak/stereo/image_raw" />
+    <param name="rgb_image_topic" type="string" value="/oak/rgb/image_raw" />
+    <param name="camera_info_topic" type="string" value="/oak/stereo/camera_info" />
+
+    <param name="use_real_camera" type="bool" value="$(arg use_real_camera)" />
+   
+    <param name="rgb_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/image$(arg image_id).png" />
+    <param name="depth_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/depth$(arg image_id).png" />
+    <param name="camera_info_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/camerainfo$(arg image_id).txt" />
+    <param name="camera_pose_filename" type="string" value="$(find simod_rolls_detection)/data/$(arg folder)/pose$(arg image_id).txt" />
+
+    <param name="reference_image_filename" type="string" value="$(find simod_rolls_detection)/data/sollevamento_pacchi_reference2.png" />
+    <param name="reference_mask_filename" type="string" value="$(find simod_rolls_detection)/data/sollevamento_pacchi_reference2_mask.png" />
+    <param name="reference_description_filename" type="string" value="$(find simod_rolls_detection)/data/sollevamento_pacchi_reference2_points.txt" />
+    <param name="flip_image" type="bool" value="true" />
+  </node>
+
+  <include file="$(find simod_camera)/launch/oak_d_pro.launch" if="$(arg use_real_camera)" />
+</launch>

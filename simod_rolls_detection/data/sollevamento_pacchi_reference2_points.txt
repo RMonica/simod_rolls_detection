@@ -1,0 +1,19 @@
+element_center 42 82
+element_center 143 82
+element_center 233 80
+element_center 328 80
+element_center 418 79
+element_center 514 78
+element_center 608 78
+
+p left   42  82 -0.36 0.0
+p left1  143 82 -0.24 0.0
+p left2  233 80 -0.12 0.0
+p center 328 80 0.0 0.0
+p right2 418 79 0.12 0.0
+p right1 514 78 0.24 0.0
+p right  608 78 0.36 0.0
+
+box_size_whd  0.82 0.20 0.34
+
+pixel_size_in_meters 0.001272

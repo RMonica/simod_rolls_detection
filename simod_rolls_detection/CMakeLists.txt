@@ -36,6 +36,7 @@ add_action_files(
   DIRECTORY action
   FILES DetectPallet.action
         DetectCloseLine.action
+        DetectPacks.action
 )
 
 generate_messages(
@@ -127,6 +128,29 @@ target_link_libraries(close_line_detection_test
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
   jsoncpp
+)
+
+add_executable(roll_pack_detection_node
+               src/roll_pack_detection_node.cpp
+               )
+
+add_dependencies(roll_pack_detection_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+target_link_libraries(roll_pack_detection_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  pallet_detection_lib
+)
+
+add_executable(roll_pack_detection_test
+               src/roll_pack_detection_test.cpp
+               )
+
+add_dependencies(roll_pack_detection_test ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+target_link_libraries(roll_pack_detection_test
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
 )
 
 add_executable(save_images 

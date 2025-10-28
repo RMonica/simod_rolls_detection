@@ -288,135 +288,116 @@ After the execution of the action, the `close_line_detection_test` publishes all
 - `layer_height`: see the `layer_z` field in the action.
 - `initial_guess_y`, `initial_guess_window_size_y`, `initial_guess_x`, `initial_guess_window_size_x`: see the corresponding parameters in the action.
 
-
-
-SIMOD VISION CTRL
+Roll packs detection
 --------------------
 
-### Simod vision ctrl node
+The `roll_pack_detection_node` detects plastic-wrapped packs of paper rolls. The packs are observed from the _front_ using a RGB-D camera. The packs are deformable and are composed of a number of sub-packs (seven sub-packs in the current implementation).
 
-The `simod_vision_ctrl_node` coordinates the UR2 cobot and the vision pipeline. It automatically executes the following sequence:
+In summary, inputs of the node are:
 
-1. Move UR2 to predefined "homing" pose.
-2. Move UR2 to a "pallet view" pose where the pallet is visible.
-3. Call the pallet detection service to estiamte the pallet/box pose.
-4. Save that pose.
-5. Compute a "close detection" pose in front of the top layer.
-6. Move UR2 to that pose.
-7. Call the close line detection service to extract the separation line between the two rolls packs.
-8. Read the detected line points, pick the most relevant one and save it.
-9. Finish.
+- A RGB image (required).
+- A depth image.<br />**Note**: The depth image is optional. If it is not provided or all values are invalid (i.e., zero), only the RGB image will be used.
+- Intrinsic parameters of the camera (focal length, image center).
+- The camera pose with respect to a *base* reference frame.<br />**Note**: The Z axis of the *base* frame must be vertical, i.e. parallel to the front plane of the packs.
+- A color image template (*reference image*) of one of the packs, observed from the front.
+- An image mask of the image template (*reference mask*), with value 255 (white) where the template contains features of the pack, and 0 in regions where the features of the pack must be ignored.
+- A *reference description*, containing metadata about the reference image (see the "Reference description file" section below).
 
-**Inputs**
-- A set of predefined "view poses" (homing, pallet view, close view offset) from a JSON file.
-- The output JSONs produced by the perception nodes:
-    - `pallet_detection_node` writes the estiamted pallet/box pose.
-    - `close_line_detection_node` writes the detected lines points.
-- Two services exposed by the perception nodes:
-    - `/detect_pallet` (std_srvs/Trigger): run pallet detection.
-    - `/detect_close_line` (std_srvs/Trigger): run close-line detection.
-- TF transforms: base/world frame (`plate_center` in our setup).
-TF transforms:
+The output of the algorithm is a list of packs in the *base* reference frame. Each pack is identified by:
 
+- The 3D pose of the central sub-pack.
+- Nominal width (x-axis), height (z-axis) and depth (y-axis) of the pack.
+- Distance of the left edge of the pack and of the right edge of the pack, with respect to the center of the pack, along the x-axis. These may be different from `width/2`, since the pack is deformable.
 
-**Outputs**
-
-- Robot motion: the node commands UR2 to move to specific task poses using the planner.
-
-- `box_pose_out.json`: normalized pose of the detected box in the world frame.
-
-- `close_line_out.json`: a single 3D point on the separation line, chosen from the detected polyline.
-
-
-**State Machine**
-
-`simod_vision_ctrl` runs an internal finite-state machine. Each cycle it checks the current state and advances when the previous action is complete:
-
-1. **MOVE_TO_HOMING** Sends UR2 to a predefined homing pose.
-
-2. **MOVE_TO_PALLET_VIEW** Sends UR2 to a predefined pallet inspection pose.
-
-3. **DETECT_PALLET** Calls /detect_pallet.
-The pallet detection node estimates the pallet/box pose and writes it to disk (e.g. box0_in_plate_center.json).
-
-4. **LOAD_AND_SAVE_BOX_POSE** Loads that box pose from file, converts it into a standard {position + rpy + frame_id} format, and writes it to box_pose_out.json.
-
-5. **COMPUTE_CLOSE_VIEW** Computes a "close inspection" pose by applying a fixed offset (roll/pitch/yaw + XYZ) to the detected box pose.
-This gives a camera viewpoint over the top layer.
-
-6. **MOVE_TO_CLOSE_VIEW** Moves UR2 to that close inspection pose.
-
-7. **DETECT_CLOSE_LINE** Calls /detect_close_line.
-The close-line node writes all detected 3D points of the separation line to disk (e.g. close_line_points.json).
-simod_vision_ctrl reads those points (in plate_center), picks the point with |y| closest to 0 (i.e. most central), and writes only that "best point" to close_line_out.json.
-
-8. **DONE** The mission is complete.
-
-This loop is driven from spinner(), which is expected to be called regularly at the node rate.
-
-**URCobot helper**
-
-Internally, simod_vision_ctrl talks to a helper class called URCobot, which wraps UR2 control.
+The `roll_pack_detection_node` uses RANSAC feature matching with SIFT features. The matched model is not the standard homography, but it also takes into account the pack deformation as horizontal and vertical translation of the sub-packs within the pack.
 
 **Parameters**
 
-All parameters for this node live under the simod_vision_ctrl namespace in the launch file.
+Main parameters of the node are:
 
-Key ones:
+- `rgb_image_topic` (string): name of the topic where the RGB image will be published.
+- `depth_image_topic` (string): name of the topic where the depth image will be published.
+- `camera_info_topic` (string): name of the topic where the camera info will be published.
+- `discard_first_camera_frames` (int): the first `discard_first_camera_frames` images received will be ignored. Use this if the first frames are bad for some reason (e.g. auto-exposure still initializing).
+- `detect_packs_action` (string): name of the action to be called to perform the detection. By default, `/detect_packs_action`.
+- `ransac_iterations` (string): number of RANSAC iterations: more iterations mean higher probability of the correct result, at the expense of computation time. By default, `200000`.
+- `no_depth` (bool): if true, the node does not use the depth image, only the RGB image.
+- `max_valid_depth` (double): pixels with depth greater than this value (in meters) will be ignored. Default: 3 meters.
 
-rate (double): main loop frequency in Hz.
+**Action**
 
-- `world_frame_id`: name of the world / base frame.
-In the current setup: "plate_center".
+Detection is started by calling the `/detect_packs_action` action. The action is of type `simod_rolls_detection/DetectPacks.action`. The action goal contains these fields:
 
-- `camera_frame_id`: the camera TF frame mounted on UR2.
-In the current setup: "arm2_camera_oak_d_pro".
+- `camera_pose`: pose of the camera with respect to the *base* frame.
+- `reference_image_filename`: path of a color image containing the RGB reference image.
+- `reference_mask_filename`: path of a color image containing the mask of the reference image.
+- `reference_description_filename`: path of a file containing the metadata about the reference mask.
+- `flip_image` (bool): if the input RGB image must be rotated 180 degrees before matching. This should not affect accuracy as SIFT features are rotation-invariant, but in practice if your camera is upside down setting this to true may be an improvement.
 
-- `tf_base_frame`: frame used as base for transforms. Often same as world_frame_id.
+When the action is called, the node first waits for messages from the camera on the `rgb_image_topic`, `depth_image_topic` (optional), and `camera_info_topic` topics.
+The detection algorithm is executed only when at least one message is received for each topic.
 
-- `vision_views_json`: path to a JSON file that defines task poses for this robot.
-   Expected structure:
-   ```json
-    {
-    "vision": {
-        "ur2": {
-        "homing":         [x, y, z, roll, pitch, yaw],
-        "pallet_view":    [x, y, z, roll, pitch, yaw],
-        "close_line_view":[x, y, z, roll, pitch, yaw]
-        }
-    }
-    }
-    ```
-- `box_pose_json_path` (string): path to the box pose estimation written by pallet detection (input to us).
+The the action result contains several array fields. The arrays have all the same length, equal to the number of detected packs.
 
-- `line_json_save_path` (string): path to the detected line points written by the close-line node (input to us).
+- `pack_poses` (array of geometry_msgs/Pose): pose of the detected packs.
+- `pack_edge_x_left` (array of float): distance of the left edge from the pack center, along the pack x-axis.
+- `pack_edge_x_right` (array of float): distance of the right edge from the pack center, along the pack x-axis.
+- `pack_height` (array of float): nominal height of the pack.
+- `pack_depth` (array of float): nominal depth of the pack.
 
-- `pallet_detect_srv` (string): name of the service to trigger pallet detection.
+**Reference description file**
 
-- `closeline_detect_srv` (string): name of the service to trigger close-line detection.
+The reference description file contains metadata about the pack template. The main goal of this file is to establish a correspondence between the points in the template and real points in 3D space.
 
-- `output_dir` (string): directory where final results are stored.
+The following commands are available:
 
-- `box_pose_out_file` (string): output file where we save the normalized box pose.
+```
+p name px py x y
+```
+where `name` is a unique string, `px` and `py` are integer pixel values and `x`, `y` are real coordinate values. Indicates the correspondence between point `px`, `py` in the template image and the real point with coordinates `[x, y, depth/2]` where depth is the pack depth as defined by the `box_size_whd` command.
 
-- `close_line_out_file` (string): output file where we save the single selected line point.
+```
+box_size_whd width height depth
+```
+where `width`, `height` and `depth` define the box size, in meters. The `width` and `height` are the two dimensions which are facing the camera, `depth` is the third dimension.
 
-**Output files format**
+```
+pixel_size_in_meters s
+```
+Defines the approximate size `s` of a pixel of the template in the real world, in meters.
 
-- `box_pose_out.json`
-   Pose of the detected box in `world_frame_id`, saved in a simple `{position + rpy}` layout:
-    ```json
-    {
-    "frame_id": "plate_center",
-    "position": { "x": ..., "y": ..., "z": ... },
-    "rpy":      { "roll": ..., "pitch": ..., "yaw": ... }
-    }
-    ```
-- `close_line_out.json`
-   Single "best" point on the detected separation line (again in `world_frame_id`):
-    ```json
-    {
-    "frame_id": "plate_center",
-    "point": { "x": ..., "y": ..., "z": ... }
-    }
-    ```
+```
+element_center px py
+```
+where `px` and `py` are integer pixel values. Creates a sub-pack in the template with center at those coordinates. As there should always be exactly `7` sub-packs in the current implementation, this command is currently ignored.
+
+An example description is provided in the file `sollevamento_pacchi_reference2_points.txt` in the `data` folder.
+
+**Debug information**
+
+During the execution of the action, an image is published to the `~/matches_image` topic, showing the matched SIFT features and the packs contours in the image. Also, the input RGB-D image, converted into a point cloud, is published to the `~/input_cloud` topic.
+
+### Roll pack detection test
+
+The `roll_pack_detection_test` node (`src/roll_pack_detection_test.cpp`) is an example node which calls the action of the `roll_pack_detection_node`. An example launch file `roll_packs_detection.launch` is also provided.
+
+The node can operate in two modes, depending on the parameter `use_real_camera`. If `use_real_camera` is false, the node loads the RGB image, the depth image and the camera info from file and publishes them while the action is executing, to simulate the camera.
+
+If `use_real_camera` is true, the node will not publish to the topics. Instead, in the launch file the `oak_d_pro.launch` file is included to connect to the real camera.
+
+The node reads the current camera pose with respect to the *base* reference frame from TF. The *base* TF frame is configured using parameter `world_frame_id`, and camera frame is configured using parameter `camera_frame_id`. If `use_real_camera` is false, the node also loads the camera pose from file (see parameter `camera_pose_filename`) and publishes it between these two TF, to simulate an external source which provides the camera pose.
+
+**Parameters**
+
+- `rgb_filename`: name of the color image file (only if `use_real_camera` is false).
+- `depth_filename`: name of the color image file (only if `use_real_camera` is false).
+- `camera_info_filename`: name of the camera info file (text file) (only if `use_real_camera` is false).
+- `camera_pose_filename`: file name of the camera pose (only if `use_real_camera` is false).
+- `world_frame_id`: name of the *base* TF frame.
+- `camera_frame_id`: name of the *camera* TF frame.
+- `use_real_camera`: see above.
+- `reference_image_filename`, `reference_mask_filename`, `reference_description_filename`, `flip_image`: see the `DetectPacks` action definition above.
+
+**Debug information**
+
+During the execution of the `roll_pack_detection_test` node, the detected packs are published as visualization markers to the topic `/detect_pack_markers`. For each pack, three TFs are also published, one in the pack center, one at the pack left edge and one at the pack right edge.
