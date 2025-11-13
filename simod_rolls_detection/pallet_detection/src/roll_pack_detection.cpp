@@ -456,7 +456,9 @@ PackDetection::RansacFindHomographyResult PackDetection::RansacFindHomography(co
                                                 const std::vector<cv::DMatch> & matches,
                                                 const FloatVector & matches_score,
                                                 const BoolVectorVector & matches_compatibility,
-                                                const Uint64VectorVector & matches_comp_graph)
+                                                const Uint64VectorVector & matches_comp_graph,
+                                                const FloatVectorVector & matches_scale
+                                                )
 {
   const uint64 ITERATIONS = m_config.ransac_iterations;
   const float REPROJ_THRESHOLD = m_config.reproj_threshold_px;
@@ -514,18 +516,40 @@ PackDetection::RansacFindHomographyResult PackDetection::RansacFindHomography(co
           sel = compatible_matches[distrib(random_generator)];
         }
 
+        if (i >= 2) // check compatibility with first two matches
+        {
+          const float s0 = matches_scale[initial_matches[0]][sel];
+          const float s1 = matches_scale[initial_matches[0]][initial_matches[1]];
+          const float s2 = matches_scale[initial_matches[1]][sel];
+          if (s0 > s1 * m_config.max_non_uniform_scaling)
+            break;
+          if (s1 > s0 * m_config.max_non_uniform_scaling)
+            break;
+          if (s2 > s1 * m_config.max_non_uniform_scaling)
+            break;
+          if (s1 > s2 * m_config.max_non_uniform_scaling)
+            break;
+          if (s0 > s2 * m_config.max_non_uniform_scaling)
+            break;
+          if (s2 > s0 * m_config.max_non_uniform_scaling)
+            break;
+        }
+
         if (i == 0)
           compatible_matches = matches_comp_graph[sel];
         else
         {
-          Uint64Vector new_cmp(compatible_matches.size());
-          Uint64Vector::iterator end_iter = std::set_intersection(compatible_matches.begin(),
-                                                                  compatible_matches.end(),
-                                                                  matches_comp_graph[sel].begin(),
-                                                                  matches_comp_graph[sel].end(),
-                                                                  new_cmp.begin());
-          new_cmp.resize(end_iter - new_cmp.begin());
-          compatible_matches = new_cmp;
+          if (i + 1 < INITIAL_MATCHES) // update compatible_matches only if it is not the last iteration
+          {
+            Uint64Vector new_cmp(compatible_matches.size());
+            Uint64Vector::iterator end_iter = std::set_intersection(compatible_matches.begin(),
+                                                                    compatible_matches.end(),
+                                                                    matches_comp_graph[sel].begin(),
+                                                                    matches_comp_graph[sel].end(),
+                                                                    new_cmp.begin());
+            new_cmp.resize(end_iter - new_cmp.begin());
+            compatible_matches = new_cmp;
+          }
         }
 
         // insertion sort to keep ordered
@@ -753,6 +777,74 @@ PackDetection::PointXYZRGBCloud PackDetection::ImageToCloud(const cv::Mat & rgb_
   return result;
 }
 
+void PackDetection::ExtractFeaturesOrientationInvariant(int nfeatures,
+                                                        const cv::Mat & grayscale_image,
+                                                        const cv::Mat & image_mask,
+                                                        std::vector<cv::KeyPoint> & keypoints,
+                                                        cv::Mat & descriptors)
+{
+  cv::Ptr<cv::SIFT> detector = cv::SIFT::create(nfeatures);
+  detector->detectAndCompute(grayscale_image, image_mask, keypoints, descriptors);
+
+  // rotate 180 degrees and repeat detection
+  cv::Point2f pc(grayscale_image.cols/2.0f - 0.5f, grayscale_image.rows/2.0f - 0.5f);
+  cv::Mat r = cv::getRotationMatrix2D(pc, 180, 1.0);
+  cv::Mat rotated_image;
+  cv::Mat rotated_mask;
+
+  cv::warpAffine(grayscale_image, rotated_image, r, grayscale_image.size());
+  cv::warpAffine(image_mask, rotated_mask, r, image_mask.size());
+
+  std::vector<cv::KeyPoint> rotated_keypoints_reference;
+  cv::Mat rotated_descriptors_reference;
+  detector->detectAndCompute(rotated_image, rotated_mask,
+                             rotated_keypoints_reference, rotated_descriptors_reference);
+
+  // rotate keypoints back
+  for (cv::KeyPoint & kp : rotated_keypoints_reference)
+  {
+    kp.pt.x = grayscale_image.cols - kp.pt.x - 0.5f;
+    kp.pt.y = grayscale_image.rows - kp.pt.y - 0.5f;
+    kp.angle = kp.angle + 180.0f;
+    if (kp.angle > 360.0f)
+      kp.angle -= 360.0f;
+  }
+
+  // initialize a flann KDTree for faster search
+  cv::Mat rkp_mat(rotated_keypoints_reference.size(), 2, CV_32FC1);
+  for (uint64 rkri = 0; rkri < rotated_keypoints_reference.size(); rkri++)
+  {
+    rkp_mat.at<float>(rkri, 0) = rotated_keypoints_reference[rkri].pt.x;
+    rkp_mat.at<float>(rkri, 1) = rotated_keypoints_reference[rkri].pt.y;
+  }
+
+  cv::flann::KDTreeIndexParams index_params(1);
+  cv::flann::Index kd_tree(rkp_mat, index_params);
+
+  // average the descriptors
+  IntVector indices;
+  FloatVector dists;
+  FloatVector kp_mat(2);
+  for (uint64 kri = 0; kri < keypoints.size(); kri++)
+  {
+    const cv::KeyPoint & kp = keypoints[kri];
+
+    kp_mat[0] = kp.pt.x;
+    kp_mat[1] = kp.pt.y;
+
+    kd_tree.knnSearch(kp_mat, indices, dists, 1);
+    if (indices.empty())
+      continue;
+
+    const uint64 rkri = indices[0];
+    const cv::KeyPoint & rkp = rotated_keypoints_reference[rkri];
+    if (cv::norm(kp.pt - rkp.pt) <= 1.0f)
+    {
+      descriptors.row(kri) = (descriptors.row(kri) + rotated_descriptors_reference.row(rkri)) / 2.0f;
+    }
+  }
+}
+
 PackDetection::DetectedPackVector PackDetection::FindMultipleObjects(const cv::Mat & image, const cv::Mat & depth_image_in,
                                        const cv::Mat & reference, const cv::Mat & reference_mask,
                                        const Intrinsics & intrinsics,
@@ -825,12 +917,15 @@ PackDetection::DetectedPackVector PackDetection::FindMultipleObjects(const cv::M
   const int nfeatures_image = m_config.nfeatures_image;
   const int nfeatures_reference = m_config.nfeatures_reference;
 
-  cv::Ptr<cv::SIFT> detector_reference = cv::SIFT::create(nfeatures_reference);
-  cv::Ptr<cv::SIFT> detector_image = cv::SIFT::create(nfeatures_image);
+  m_log(1, "Finding features.");
+
   std::vector<cv::KeyPoint> keypoints_reference, keypoints_image;
   cv::Mat descriptors_reference, descriptors_image;
-  detector_reference->detectAndCompute(reference_grayscale, reference_mask_grayscale, keypoints_reference, descriptors_reference);
-  detector_image->detectAndCompute(image_grayscale, image_mask, keypoints_image, descriptors_image);
+  // feature extraction of OpenCV is not enough orientation invariant, apparently
+  ExtractFeaturesOrientationInvariant(nfeatures_reference, reference_grayscale, reference_mask_grayscale,
+                                      keypoints_reference, descriptors_reference);
+  ExtractFeaturesOrientationInvariant(nfeatures_image, image_grayscale, image_mask,
+                                      keypoints_image, descriptors_image);
 
   BoolVector valid_keypoints_image(keypoints_image.size(), true);
 
@@ -838,6 +933,7 @@ PackDetection::DetectedPackVector PackDetection::FindMultipleObjects(const cv::M
 
   while (rfhrs.size() < m_config.sanity_max_objects)
   {
+    m_log(1, "Keypoints reference size: " + std::to_string(keypoints_reference.size()));
     m_log(1, "Keypoints image size: " + std::to_string(keypoints_image.size()));
     m_log(1, "Searching object...");
     const RansacFindHomographyResult rfhr = FindObject(image_grayscale, depth_image, keypoints_image, descriptors_image,
@@ -1066,6 +1162,36 @@ PackDetection::RansacFindHomographyResult PackDetection::FindObjectPose(const cv
     observed_points.push_back(observed_point);
   }
 
+  // probe to see if the template is rotated 180 degrees in the image (package upside down).
+  // if so, rotate 180 degrees the reference points too
+  {
+    const double probe_x = reference_image.cols / 2;
+    const double probe_y_low = reference_image.rows * 3 / 4;
+    const double probe_y_up = reference_image.rows * 1 / 4;
+    const int element_low = rfhr.detection_model.PointToElementN(reference_image.cols, reference_image.rows, probe_x, probe_y_low);
+    const int element_up = rfhr.detection_model.PointToElementN(reference_image.cols, reference_image.rows, probe_x, probe_y_up);
+    double lx, ly;
+    double ux, uy;
+    rfhr.detection_model.ApplyToPoint(element_low, probe_x, probe_y_low, lx, ly);
+    rfhr.detection_model.ApplyToPoint(element_up, probe_x, probe_y_up, ux, uy);
+
+    const Eigen::Vector2d image_up(ux - lx, uy - ly);
+    const Eigen::Vector3d camera_up = camera_pose.linear().inverse().cast<double>() * Eigen::Vector3d::UnitZ();
+    const bool is_rotated = image_up.dot(camera_up.head<2>()) < 0.0;
+
+    if (is_rotated)
+    {
+      m_log(1, "Template seems reversed in the image, rotating reference points during pose estimation.");
+
+      for (Eigen::Vector3d & arp : adjusted_reference_points)
+      {
+        // rotate 180 degrees around y
+        arp.x() *= -1.0;
+        arp.z() *= -1.0;
+      }
+    }
+  }
+
   RollPackPoseEstimator estimator(m_config.pose_px_weight,
                                   m_config.pose_depth_weight / reference_points.pixel_size_in_meters,
                                   camera_pose.cast<double>(),
@@ -1173,6 +1299,7 @@ PackDetection::RansacFindHomographyResult PackDetection::FindObject(const cv::Ma
   }
 
   BoolVectorVector matches_compatibility(good_matches.size(), BoolVector(good_matches.size(), true));
+  FloatVectorVector matches_scale(good_matches.size(), FloatVector(good_matches.size(), NAN));
 
   // prepare compatibility matrix
   for (uint64 i = 0; i < good_matches.size(); i++)
@@ -1235,30 +1362,47 @@ PackDetection::RansacFindHomographyResult PackDetection::FindObject(const cv::Ma
       const float ni = cv::norm(ipt0 - ipt);
       const float nr = cv::norm(rpt0 - rpt);
 
+      if (ni < 1 || nr < 1)
+      {
+        matches_compatibility[i][h] = false;
+        matches_compatibility[h][i] = false;
+        continue;
+      }
+
       // check distance compatibility
       if (ni > nr * MAX_SCALING + REPROJ_THRESHOLD)
       {
         matches_compatibility[i][h] = false;
         matches_compatibility[h][i] = false;
+        continue;
       }
       if (nr > ni * MAX_SCALING + REPROJ_THRESHOLD)
       {
         matches_compatibility[i][h] = false;
         matches_compatibility[h][i] = false;
+        continue;
       }
       if (ni < nr / MAX_SCALING - REPROJ_THRESHOLD)
       {
         matches_compatibility[i][h] = false;
         matches_compatibility[h][i] = false;
+        continue;
       }
       if (nr < ni / MAX_SCALING - REPROJ_THRESHOLD)
       {
         matches_compatibility[i][h] = false;
         matches_compatibility[h][i] = false;
+        continue;
+      }
+
+      {
+        matches_scale[i][h] = ni / nr;
+        matches_scale[h][i] = ni / nr;
       }
     }
   }
 
+  // precompute graph sel -> comp
   Uint64VectorVector matches_comp_graph(good_matches.size());
   uint64 matches_comp_graph_total = 0;
   for (uint64 i = 0; i < good_matches.size(); i++)
@@ -1285,7 +1429,8 @@ PackDetection::RansacFindHomographyResult PackDetection::FindObject(const cv::Ma
 
   RansacFindHomographyResult rfhr = RansacFindHomography(reference_grayscale, image_grayscale,
                                                          keypoints_reference, keypoints_image, good_matches,
-                                                         matches_score, matches_compatibility, matches_comp_graph);
+                                                         matches_score, matches_compatibility, matches_comp_graph,
+                                                         matches_scale);
 
   m_log(1, "Consensus size: " + std::to_string(rfhr.consensus.size()) + ", consensus score: " + std::to_string(rfhr.score) + ".");
 

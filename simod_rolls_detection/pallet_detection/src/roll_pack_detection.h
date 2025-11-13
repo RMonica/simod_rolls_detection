@@ -42,6 +42,7 @@ class PackDetection
   typedef std::vector<cv::Mat> MatVector;
   typedef std::vector<bool> BoolVector;
   typedef std::vector<BoolVector> BoolVectorVector;
+  typedef std::vector<FloatVector> FloatVectorVector;
   typedef std::vector<std::string> StringVector;
 
   typedef uint64_t uint64;
@@ -52,6 +53,9 @@ class PackDetection
   typedef uint16_t uint16;
   typedef std::vector<uint64> Uint64Vector;
   typedef std::vector<Uint64Vector> Uint64VectorVector;
+  typedef std::pair<uint64, uint64> Uint64Uint64Pair;
+  typedef std::pair<Uint64Uint64Pair, Uint64Vector> Uint64VectorUint64PairPair;
+  typedef std::map<Uint64Uint64Pair, Uint64Vector> Uint64VectorUint64PairMap;
 
   static constexpr int ESTIMATOR_COUNT = 7;
 
@@ -91,7 +95,7 @@ class PackDetection
     float translation_px_weight_y = 0.03;
     float max_error_for_huber_loss = 3.0;
     float max_scaling = 3.0f;
-    float max_non_uniform_scaling = 1.2f;
+    float max_non_uniform_scaling = 1.5f;
     float max_feature_diff_angle = M_PI / 4.0f;
     float min_object_score = 10.0f;
     uint64 sanity_max_objects = 20;
@@ -198,7 +202,8 @@ class PackDetection
                                                   const std::vector<cv::DMatch> & matches,
                                                   const FloatVector & matches_score,
                                                   const BoolVectorVector & matches_compatibility,
-                                                  const Uint64VectorVector & matches_comp_graph);
+                                                  const Uint64VectorVector & matches_comp_graph,
+                                                  const FloatVectorVector & matches_scale);
 
   void PrintModel(const RollPackDetectionModel & model);
 
@@ -232,6 +237,12 @@ class PackDetection
                                         const ReferencePoints & reference_points);
 
   float ComputeMatchSpreadScore(const float min_match_element, const float max_match_element) const;
+
+  void ExtractFeaturesOrientationInvariant(int nfeatures,
+                                           const cv::Mat & grayscale_image,
+                                           const cv::Mat & image_mask,
+                                           std::vector<cv::KeyPoint> & keypoints,
+                                           cv::Mat & descriptors);
 
   private:
   std::string m_reference_image_points_filename;
