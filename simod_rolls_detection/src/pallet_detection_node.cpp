@@ -14,6 +14,9 @@
 #include <jsoncpp/json/json.h>
 #include <limits>
 
+#include <tf2_ros/transform_listener.h>
+#include <tf2_eigen/tf2_eigen.h>
+
 // OpenCV
 #include <opencv2/opencv.hpp>
 
@@ -25,8 +28,8 @@
 #include <cmath>
 #include <map>
 #include <mutex>
-#include <sstream>   // <-- NEW
-#include <algorithm> // <-- NEW
+#include <sstream>   
+#include <algorithm> 
 
 // PCL
 #include <pcl/common/colors.h>
@@ -36,10 +39,6 @@
 
 #include <pallet_detection.h>
 
-// ===== TF2 includes =====
-#include <tf2_ros/transform_listener.h>
-#include <tf2_eigen/tf2_eigen.h>
-// ========================
 
 typedef ros::NodeHandle Node;
 typedef sensor_msgs::Image ImageMsg;
@@ -406,7 +405,7 @@ public:
     m_as->setSucceeded(result);
   }
 
-  // ========= Service: usa lo stesso core della pipeline =========
+  // ========= Service =========
   bool onDetectPalletSrv(std_srvs::Trigger::Request &, std_srvs::Trigger::Response &res)
   {
     // 1) Attendi immagini e camera info (come in Run)

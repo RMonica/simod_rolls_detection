@@ -1,0 +1,16 @@
+# Goal
+string reference_image_filename
+string reference_mask_filename
+string reference_description_filename
+geometry_msgs/Pose camera_pose
+bool flip_image
+---
+# Result
+geometry_msgs/Pose[] pack_poses
+float64[] pack_edge_x_left
+float64[] pack_edge_x_right
+float64[] pack_height
+float64[] pack_depth
+---
+# Feedback
+string status

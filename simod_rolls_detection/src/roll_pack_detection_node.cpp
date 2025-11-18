@@ -8,6 +8,13 @@
 #include <eigen_conversions/eigen_msg.h>
 #include <actionlib/server/simple_action_server.h>
 
+#include <std_srvs/Trigger.h>
+#include <jsoncpp/json/json.h>
+#include <limits>
+
+#include <tf2_ros/transform_listener.h>
+#include <tf2_eigen/tf2_eigen.h>
+
 // OpenCV
 #include <opencv2/opencv.hpp>
 
@@ -105,6 +112,18 @@ class PacksDetectionNode
         m_cloud_publishers[s] = m_nodeptr->advertise<sensor_msgs::PointCloud2>(topic_name, 1);
       }
     }
+
+    m_nodeptr->param<std::string>("camera_frame_id", m_camera_frame_id, std::string("camera"));
+    std::string detect_packs_srv_name;
+    m_nodeptr->param<std::string>("detect_packs_srv", detect_packs_srv_name, std::string("/detect_packs"));
+    m_srv_detect_packs = m_nodeptr->advertiseService(
+        detect_packs_srv_name,
+        &PacksDetectionNode::onDetectPacksSrv, this);
+    
+    // path del file che il controller leggerà (stesso nome del param nel tuo launch/controller)
+    m_nodeptr->param<std::string>("roll_packs_json_path",
+                              m_roll_packs_json_path,
+                              "files/output/roll_packs.json");
 
     m_as->start();
   }
@@ -261,6 +280,185 @@ class PacksDetectionNode
     m_as->setSucceeded(result);
   }
 
+  bool onDetectPacksSrv(std_srvs::Trigger::Request&, std_srvs::Trigger::Response& res)
+  {
+    // 1) Wait for inputs (like Run)
+    cv::Mat rgb_image, depth_image;
+    std::shared_ptr<PackDetection::Intrinsics> camera_info;
+    ROS_INFO("roll_pack_detection_node: Trigger start.");
+    {
+      ros::Rate wait_rate(100);
+      std::unique_lock<std::mutex> lock(m_mutex);
+      if (m_discard_first_camera_frames)
+        ROS_INFO("roll_pack_detection_node: first %d camera frames will be discarded.", int(m_discard_first_camera_frames));
+      for (int i = 0; i < m_discard_first_camera_frames + 1; i++)
+      {
+        m_last_rgb_image = cv::Mat();
+        if (!m_no_depth) m_last_depth_image = cv::Mat();
+        m_last_camera_info.reset();
+        while (m_last_rgb_image.empty() || (!m_no_depth && m_last_depth_image.empty()) || !m_last_camera_info)
+        {
+          lock.unlock();
+          ROS_INFO_THROTTLE(2.0, "roll_pack_detection_node: waiting for images...");
+          wait_rate.sleep();
+          lock.lock();
+          if (!ros::ok()) { res.success=false; res.message="shutdown"; return true; }
+        }
+        if (!ros::ok()) { res.success=false; res.message="shutdown"; return true; }
+      }
+      rgb_image    = m_last_rgb_image;
+      if (!m_no_depth) depth_image = m_last_depth_image;
+      camera_info  = m_last_camera_info;
+    }
+    ROS_INFO("roll_pack_detection_node: received images.");
+
+    // 2) TF camera pose
+    Eigen::Affine3d camera_pose = Eigen::Affine3d::Identity();
+    try
+    {
+      const auto T = tf_buffer_.lookupTransform(m_world_frame_id, m_camera_frame_id, ros::Time(0), ros::Duration(0.5));
+      camera_pose = Eigen::Affine3d(tf2::transformToEigen(T).matrix());
+    }
+    catch (const tf2::TransformException &ex)
+    {
+      res.success = false;
+      res.message = std::string("TF lookup failed: ") + ex.what();
+      return true;
+    }
+
+    // 3) Reference files + flip flag from params
+    std::string ref_img, ref_mask, ref_desc;
+    bool flip_image = false;
+    if (!m_nodeptr->getParam("reference_image_filename", ref_img) ||
+        !m_nodeptr->getParam("reference_description_filename", ref_desc))
+    {
+      res.success = false;
+      res.message = "Missing params: reference_image_filename/reference_description_filename";
+      return true;
+    }
+    m_nodeptr->param<std::string>("reference_mask_filename", ref_mask, std::string(""));
+    m_nodeptr->param<bool>("flip_image", flip_image, false);
+
+    cv::Mat reference_image = cv::imread(ref_img);
+    if (!reference_image.data)
+    {
+      res.success = false;
+      res.message = "Cannot read reference_image_filename: " + ref_img;
+      return true;
+    }
+    cv::Mat reference_mask;
+    if (!ref_mask.empty())
+    {
+      reference_mask = cv::imread(ref_mask);
+      if (!reference_mask.data)
+      {
+        res.success = false;
+        res.message = "Cannot read reference_mask_filename: " + ref_mask;
+        return true;
+      }
+    }
+    auto reference_points = PackDetection::LoadReferencePoints(ref_desc, m_log);
+    if (!reference_points)
+    {
+      res.success = false;
+      res.message = "Cannot read reference_description_filename: " + ref_desc;
+      return true;
+    }
+
+    // 4) Config from params (use same names as in node)
+    PackDetection::Config config;
+    m_nodeptr->param<float>("max_valid_depth", config.max_valid_depth, config.max_valid_depth);
+    Uint64Param("nfeatures_reference", config.nfeatures_reference, config.nfeatures_reference);
+    Uint64Param("nfeatures_image", config.nfeatures_image, config.nfeatures_image);
+    Uint64Param("ransac_iterations", config.ransac_iterations, config.ransac_iterations);
+    Uint64Param("ransac_refine_iterations", config.ransac_refine_iterations, config.ransac_refine_iterations);
+    m_nodeptr->param<float>("feature_ratio_thresh", config.feature_ratio_thresh, config.feature_ratio_thresh);
+    Uint64Param("knn_K", config.knn_K, config.knn_K);
+    m_nodeptr->param<float>("reproj_threshold_px", config.reproj_threshold_px, config.reproj_threshold_px);
+    m_nodeptr->param<float>("reproj_refine_threshold_px", config.reproj_refine_threshold_px, config.reproj_refine_threshold_px);
+    m_nodeptr->param<float>("reproj_closed_form_threshold_px", config.reproj_closed_form_threshold_px, config.reproj_closed_form_threshold_px);
+    m_nodeptr->param<float>("match_spread_score_max_diff", config.match_spread_score_max_diff, config.match_spread_score_max_diff);
+    m_nodeptr->param<float>("translation_px_weight_x", config.translation_px_weight_x, config.translation_px_weight_x);
+    m_nodeptr->param<float>("translation_px_weight_y", config.translation_px_weight_y, config.translation_px_weight_y);
+    m_nodeptr->param<float>("max_error_for_huber_loss", config.max_error_for_huber_loss, config.max_error_for_huber_loss);
+    m_nodeptr->param<float>("max_scaling", config.max_scaling, config.max_scaling);
+    m_nodeptr->param<float>("max_non_uniform_scaling", config.max_non_uniform_scaling, config.max_non_uniform_scaling);
+    m_nodeptr->param<float>("max_feature_diff_angle", config.max_feature_diff_angle, config.max_feature_diff_angle);
+    m_nodeptr->param<float>("min_object_score", config.min_object_score, config.min_object_score);
+    Uint64Param("sanity_max_objects", config.sanity_max_objects, config.sanity_max_objects);
+    m_nodeptr->param<float>("pose_depth_weight", config.pose_depth_weight, config.pose_depth_weight);
+    m_nodeptr->param<float>("pose_px_weight", config.pose_px_weight, config.pose_px_weight);
+    config.reverse_image = flip_image;
+
+    // 5) Run detection
+    PackDetection rpd(config,
+                      m_log,
+                      [this](const std::string& name, const cv::Mat& img, const std::string& enc){ this->PublishImage(img, enc, name); },
+                      [this](const std::string& name, const PointXYZRGBCloud& cloud){ this->PublishCloud(cloud, name); },
+                      rand());
+
+    auto detected = rpd.FindMultipleObjects(
+        rgb_image, depth_image, reference_image, reference_mask,
+        *camera_info, camera_pose.cast<float>(), *reference_points);
+
+    const bool ok = !detected.empty();
+    ROS_INFO_STREAM("roll_pack_detection_node: detected packs: " << detected.size());
+
+    // --- Save JSON if we found something (MINIMAL: only center/right/left with RPY) ---
+    if (ok)
+    {
+      auto PoseToJsonRPY = [](const Eigen::Affine3d& T) {
+        Json::Value j;
+        const Eigen::Vector3d t = T.translation();
+        // Eigen::Matrix3d -> roll,pitch,yaw (X-Y-Z intrinsic)
+        Eigen::Vector3d rpy = T.linear().eulerAngles(0, 1, 2); // [roll, pitch, yaw] (radians)
+
+        j["position"]["x"] = t.x();
+        j["position"]["y"] = t.y();
+        j["position"]["z"] = t.z();
+
+        j["rpy"]["roll"]  = rpy[0];
+        j["rpy"]["pitch"] = rpy[1];
+        j["rpy"]["yaw"]   = rpy[2];
+        return j;
+      };
+
+      // Use only first detected pack (index 0), per your requirement
+      const auto& d = detected.front();
+
+      Eigen::Affine3d T_center = d.center_pose;
+      // Offsets along the pack's +X (right) and -X (left) axes in WORLD
+      Eigen::Affine3d T_right = T_center;
+      T_right.translation() += T_center.linear() * Eigen::Vector3d(d.detected_right_width, 0.0, 0.0);
+
+      Eigen::Affine3d T_left = T_center;
+      T_left.translation()  += T_center.linear() * Eigen::Vector3d(-d.detected_left_width, 0.0, 0.0);
+
+      Json::Value root;
+      root["frame_id"]     = m_world_frame_id;  // Keep this so consumers know the reference frame
+      root["box_center_0"] = PoseToJsonRPY(T_center);
+      root["box_right_0"]  = PoseToJsonRPY(T_right);
+      root["box_left_0"]   = PoseToJsonRPY(T_left);
+
+      std::ofstream ofs(m_roll_packs_json_path);
+      if (!ofs.is_open())
+      {
+        ROS_ERROR("roll_pack_detection_node: cannot open '%s'", m_roll_packs_json_path.c_str());
+        res.success = false;
+        res.message = std::string("failed to write JSON: ") + m_roll_packs_json_path;
+        return true;
+      }
+      ofs << root.toStyledString();
+      ROS_INFO("roll_pack_detection_node: wrote box_center_0/right_0/left_0 to %s", m_roll_packs_json_path.c_str());
+    }
+
+
+
+    res.success = ok;
+    res.message = ok ? "packs detected" : "no packs";
+    return true;
+  }
+
   void RgbImageCallback(const sensor_msgs::Image & msg)
   {
     std::unique_lock<std::mutex> lock(m_mutex);
@@ -407,16 +605,30 @@ class PacksDetectionNode
   uint64 m_random_seed;
 
   int m_discard_first_camera_frames;
+  
+  // Trigger service
+  ros::ServiceServer m_srv_detect_packs;
+  // Frames
+  std::string m_camera_frame_id;
+
+  // TF2 buffer + listener (order matters)
+  tf2_ros::Buffer tf_buffer_;
+  tf2_ros::TransformListener tf_listener_{tf_buffer_};
+
+  // JSON output path
+  std::string m_roll_packs_json_path; // dove salvare il JSON del box_0
+
 };
 
 int main(int argc, char **argv)
 {
-  ros::init(argc, argv, "roll pack detection");
+  ros::init(argc, argv, "roll_pack_detection_node");
   std::shared_ptr<Node> nodeptr(new Node("~"));
   ROS_INFO("roll_pack_detection_node started");
 
   PacksDetectionNode pd(nodeptr);
-  ros::spin();
+  ros::MultiThreadedSpinner spinner(3);   
+  spinner.spin();       
 
   return 0;
 }

@@ -1,4 +1,5 @@
 #include "simod_rolls_detection/ur_cobot.h"
+#include <ima_planner/DesiredTcpVel.h>
 
 URCobot::URCobot(const std::string robot_id, ros::NodeHandle &nh)
 {
@@ -75,9 +76,12 @@ URCobot::URCobot(const std::string robot_id, ros::NodeHandle &nh)
 
 }
 
+
 void URCobot::initControllerServices()
 {
     switch_controller_client = nh.serviceClient<controller_manager_msgs::SwitchController>("/arm" + robot_id + "/controller_manager/switch_controller");
+    desired_tcp_vel_client = nh.serviceClient<ima_planner::DesiredTcpVel>(
+        "/arm" + robot_id + "/moveit_servo_wrapper/desired_tcp_vel");
 }
 
 /**
@@ -147,7 +151,7 @@ bool URCobot::movep(Eigen::Affine3d pose_E_in_0)
     movep_srv.request.send = true;
 
     // abbasso velocità durante il planning
-    utilities.setSpeedSlider(0.1, robot_id, nh);
+    utilities.setSpeedSlider(0.10, robot_id, nh);
 
     bool ok = utilities.movep_client.call(movep_srv);
     // ripristino prima di uscire (anche in caso di fallimento)
@@ -192,6 +196,86 @@ bool URCobot::movej(const Vector6d &q, bool reverse)
     return true;
 }
 
+/**
+ * @brief Sends a linear velocity command to the robot along a specified axis in a reference frame.
+ *
+ * This function uses the `/desired_tcp_vel` service to request a linear motion. The motion can be
+ * terminated based on:
+ *
+ * - distance traveled (`until_dist`)
+ * - contact force detected (`until_contact`)
+ *
+ * Additionally, it supports an optional retraction phase (e.g. for disengaging).
+ *
+ * @param axis Vector direction of motion (will be normalized).
+ * @param vel Desired velocity magnitude [m/s].
+ * @param frame "tcp" or "base": which frame to interpret the `axis` in.
+ * @param until_dist If > 0: move until this distance is traveled [m].
+ * @param until_contact If > 0: stop if contact force exceeds this threshold [N].
+ * @param retract If > 0: perform a backward movement of this distance after the main motion.
+ *
+ * @return true if service call and motion start succeeded.
+ * @return false if service call failed or motion did not start.
+ */
+bool URCobot::movev(const Eigen::Vector3d &axis, double vel,
+                    const std::string &frame,
+                    double until_dist, double until_contact,
+                    double retract)
+{
+    // Switch controller
+    if (!switchController(JOINT_VELOCITY))
+    {
+        ROS_ERROR("Failed to switch to joint velocity controller");
+        return false;
+    }
+
+    // Compute velocity
+    Eigen::Vector3d lin_vel = axis.normalized() * vel;
+
+    // Prepare the msg for the service
+    ima_planner::DesiredTcpVel srv;
+    srv.request.linear_vel.x = lin_vel.x();
+    srv.request.linear_vel.y = lin_vel.y();
+    srv.request.linear_vel.z = lin_vel.z();
+
+    srv.request.ref_frame = (frame == "tcp") ? this->frame_id : this->base_frame_id;
+
+    srv.request.move_until_contact = (until_contact > 0);
+    srv.request.move_until_distance = (until_dist > 0);
+    srv.request.contact_force = until_contact;
+    srv.request.distance = until_dist;
+
+    utilities.setSpeedSlider(1.0, robot_id, nh);
+    // ros::Duration(0.2).sleep(); // wait for effective speed slider setting
+    ROS_INFO("Calling movev: vel=%.3f, distance=%.3f, frame=%s",
+             vel, until_dist, srv.request.ref_frame.c_str());
+
+    // Call to the service
+    if (!desired_tcp_vel_client.call(srv))
+    {
+        ROS_ERROR("Failed to call /desired_tcp_vel service");
+        return false;
+    }
+
+    if (!srv.response.ok)
+    {
+        ROS_WARN("Service response: motion not started");
+        return false;
+    }
+
+    ROS_INFO("Started linear movement along [%.3f, %.3f, %.3f] in frame [%s]",
+             lin_vel.x(), lin_vel.y(), lin_vel.z(), srv.request.ref_frame.c_str());
+
+    // Optional retraction
+    if (retract > 0)
+    {
+        ROS_INFO("Retracting %.3f meters", retract);
+        Eigen::Vector3d back = -axis;
+        return movev(back, vel, frame, retract, 0.0, 0.0);
+    }
+
+    return true;
+}
 
 
 /*--------------------ACTIONS----------------------------*/
@@ -216,6 +300,155 @@ bool URCobot::reachPose(const Eigen::Affine3d &target, double tol)
     return false;
 }
 
+
+
+void URCobot::paddleInsertion(double contact_N,
+                              double speed,
+                              double max_dist)
+{
+    switch (action_state)
+    {
+
+    case ActionState::START_INSERTION:
+    {
+        // Azzera F/T prima dell’avanzamento
+        ROS_INFO("arm%s: zeroing FT sensor before contact approach.", robot_id.c_str());
+        utilities.zeroForceTorqueSensor(robot_id, nh);
+        ros::Duration(0.5).sleep();
+        // Direzione: +Z tcp
+        const Eigen::Vector3d dir_tcp(0.0, 0.0, 1.0);
+
+        // creo un target geometrico (come fallback per distanza)
+        Eigen::Affine3d current_pose = getCurrentPose();
+        Eigen::Vector3d t_local = dir_tcp.normalized() * max_dist;
+        Eigen::Vector3d t_base = current_pose.linear() * t_local;
+        target_approach_pose = current_pose;
+        target_approach_pose.translation() += t_base;
+
+        if (!movev(dir_tcp, speed, "tcp", max_dist, contact_N, 0.0))
+        {
+            ROS_ERROR("arm%s: movev(contact) failed.", robot_id.c_str());
+            return;
+        }
+
+        ROS_INFO("arm%s: contact approach started (dir tcp +Y, v=%.2f m/s, F=%.1f N, d=%.2f m).",
+                 robot_id.c_str(), speed, contact_N, max_dist);
+
+        action_state = ActionState::WAIT_INSERTION;
+        break;
+    }
+
+    case ActionState::WAIT_INSERTION:
+    {
+        // fine per distanza?
+        const Eigen::Affine3d pose_E_in_0 = T_B_0.inverse() * target_approach_pose;
+        const bool reached_geo = isAtTarget(pose_E_in_0, 0.01);
+
+        // fine per forza?
+        const Vector6d wrench = getCurrentWrench();
+        const double f_z = wrench(2);                          // asse Z del TCP
+        const bool reached_force = std::abs(f_z) >= contact_N; // soglia raggiunta
+
+        ROS_INFO_THROTTLE(1.0, "arm%s WAIT_INSERTION: |Fz|=%.2f N, reached_geo=%s",
+                          robot_id.c_str(), std::abs(f_z), (reached_geo ? "yes" : "no"));
+
+        if (reached_force)
+        {
+            ROS_INFO("arm%s: target force reached -> retract 0.04 m along -Z_tcp.", robot_id.c_str());
+            action_state = ActionState::START_DETACH; // passa alla fase di retrazione
+            // avvia subito la detachment (continuerà nelle chiamate successive)
+            detachment(0.03); // 3cm
+            break;
+        }
+
+        if (reached_geo)
+        {
+            ROS_WARN("arm%s: insertion ended by max distance (no contact) -> no retract.", robot_id.c_str());
+            action_state = ActionState::DONE;
+        }
+        break;
+    }
+
+    case ActionState::START_DETACH:
+    case ActionState::WAIT_DETACH:
+    {
+        // esegui retrazione lungo -Z_tcp per 4 cm usando la tua detachment()
+        detachment(0.04);
+        // quando detachment termina, detachment stessa mette action_state = DONE
+        break;
+    }
+
+    case ActionState::DONE:
+        // sequenza paddle insertion + (eventuale) retract completata
+        break;
+    }
+}
+
+/**
+ * @brief Performs a detachment motion of the end-effector along the negative Z axis of the TCP.
+ *
+ * This function executes the following states:
+ *
+ * - START_DETACH:
+ *   - Computes the detachment direction in TCP frame (negative Z).
+ *   - Transforms it to the base frame.
+ *   - Saves the target detachment pose in `target_detach_pose`.
+ *   - Calls `movev()` to initiate the linear motion.
+ *   - Transitions to WAIT_DETACH.
+ *
+ * - WAIT_DETACH:
+ *   - Continuously checks if the robot has reached the detachment pose.
+ *   - When target is reached (within a tolerance), sets state to DONE.
+ *
+ * @param distance Distance [m] to move along the TCP's -Z direction.
+ */
+void URCobot::detachment(double distance)
+{
+    switch (action_state)
+    {
+    case ActionState::START_DETACH:
+    {
+        Eigen::Vector3d dir(0.0, 0.0, -1.0); // Direction in TCP frame
+        double speed = 0.05;                 // 5 cm/s
+
+        Eigen::Affine3d current_pose = getCurrentPose();          // posa attuale
+        Eigen::Vector3d t_local = dir.normalized() * distance;    // vettore spostamento desiderato nel TCP frame
+        Eigen::Vector3d t_base = current_pose.linear() * t_local; // trasformo il vettore spostamento nel frame di base
+
+        target_detach_pose = current_pose;
+        target_detach_pose.translation() += t_base; // salvo la posa obiettivo finale nel frame di base (dato da t_base + posa attuale)
+
+        if (!movev(dir, speed, "tcp", distance, 0.0, 0.0))
+        {
+            ROS_ERROR("Translation failed");
+            return;
+        }
+
+        ROS_INFO("Started detachment motion for arm%s", robot_id.c_str());
+        action_state = ActionState::WAIT_DETACH;
+        break;
+    }
+
+    case ActionState::WAIT_DETACH:
+    {
+        ROS_INFO_THROTTLE(1.0, "Waiting for arm%s to reach detachment target...", robot_id.c_str());
+
+        z_E = getCurrentPose();
+
+        Eigen::Affine3d pose_E_in_0 = T_B_0.inverse() * target_detach_pose;
+
+        if (isAtTarget(pose_E_in_0, 0.01))
+        {
+            ROS_INFO("Detachment complete");
+            action_state = ActionState::DONE;
+        }
+        break;
+    }
+
+    case ActionState::DONE:
+        break;
+    }
+}
 
 /*--------------------KINEMATICS----------------------------*/
 

@@ -2,7 +2,7 @@
   <!-- 0 2 3 5 7 8 9 -->
   <arg name="image_id" default="2"/>
   <arg name="folder" default="bologna_29-07-25/Test Camera 29-07-25 Frontali"/>
-  <arg name="use_real_camera" default="false" />
+  <arg name="use_real_camera" default="true" />
 
   <node pkg="simod_rolls_detection" type="roll_pack_detection_node" name="roll_pack_detection_node" output="screen">
 
@@ -13,18 +13,20 @@
     <param name="detect_packs_action" type="string" value="/detect_packs_action" />
 
     <!-- increase this if first camera frames are bad for some reason -->
-    <param name="discard_first_camera_frames" type="int" value="0" />
+    <param name="discard_first_camera_frames" type="int" value="50" />
 
     <param name="ransac_iterations" type="int" value="200000" />
 
     <param name="no_depth" type="bool" value="false" />
+    <param name="world_frame_id" type="string" value="plate_center" />
+    <param name="camera_frame_id" type="string" value="arm2_camera_oak_d_pro" />
 
   </node>
 
   <node pkg="simod_rolls_detection" type="roll_pack_detection_test" name="roll_pack_detection_test" output="screen">
 
-    <param name="world_frame_id" type="string" value="map" />
-    <param name="camera_frame_id" type="string" value="camera" />
+    <param name="world_frame_id" type="string" value="plate_center" />
+    <param name="camera_frame_id" type="string" value="arm2_camera_oak_d_pro" />
 
     <param name="depth_image_topic" type="string" value="/oak/stereo/image_raw" />
     <param name="rgb_image_topic" type="string" value="/oak/rgb/image_raw" />

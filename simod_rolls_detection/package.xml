@@ -29,8 +29,16 @@
 
   <depend>controller_manager_msgs</depend>
   <depend>ur_msgs</depend>
-  <depend>ima_planner</depend>
+  
   <depend>cv_bridge</depend> 
+
+  <depend>moveit_core</depend>
+  <depend>moveit_ros_planning</depend>
+  <depend>moveit_ros_planning_interface</depend>
+  <depend>moveit_msgs</depend>
+  <depend>shape_msgs</depend>
+  <depend>geometric_shapes</depend>
+  <depend>resource_retriever</depend>
 
   <!-- system libs via rosdep -->
   <build_depend>libpcl-all-dev</build_depend>
@@ -44,6 +52,10 @@
 
   <build_depend>libjsoncpp-dev</build_depend>
   <exec_depend>libjsoncpp-dev</exec_depend>
+
+  <build_depend>ima_planner</build_depend>
+  <exec_depend>ima_planner</exec_depend>
+
 
   <export/>
 </package>

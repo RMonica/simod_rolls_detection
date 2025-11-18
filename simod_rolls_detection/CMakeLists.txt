@@ -23,11 +23,19 @@ roscpp
   ur_msgs
   ima_planner
   cv_bridge
+  moveit_core
+  moveit_ros_planning
+  moveit_ros_planning_interface
+  moveit_msgs
+  shape_msgs
+  geometric_shapes
+  resource_retriever
 )
 
 find_package(PCL REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Ceres REQUIRED)
+
 
 ###################################
 ## catkin specific configuration ##
@@ -59,6 +67,13 @@ catkin_package(
     controller_manager_msgs ur_msgs
     ima_planner
     cv_bridge
+    moveit_core
+    moveit_ros_planning
+    moveit_ros_planning_interface
+    moveit_msgs
+    shape_msgs
+    geometric_shapes
+    resource_retriever
   # PCL/OpenCV/Ceres sono system libs -> non in CATKIN_DEPENDS
 )
 
@@ -74,6 +89,7 @@ include_directories(
   ${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
   ${CERES_INCLUDE_DIRS}
+  ${ima_planner_INCLUDE_DIRS}
 )
 
 add_executable(pallet_detection_node 
@@ -138,8 +154,10 @@ add_dependencies(roll_pack_detection_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${
 
 target_link_libraries(roll_pack_detection_node
   ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES} 
   ${OpenCV_LIBRARIES}
   pallet_detection_lib
+  jsoncpp
 )
 
 add_executable(roll_pack_detection_test
@@ -150,7 +168,10 @@ add_dependencies(roll_pack_detection_test ${${PROJECT_NAME}_EXPORTED_TARGETS} ${
 
 target_link_libraries(roll_pack_detection_test
   ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES} 
   ${OpenCV_LIBRARIES}
+  pallet_detection_lib
+  jsoncpp
 )
 
 add_executable(save_images 

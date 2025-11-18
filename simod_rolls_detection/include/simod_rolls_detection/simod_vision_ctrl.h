@@ -12,9 +12,11 @@
 #include "trajectory_msgs/MultiDOFJointTrajectory.h"
 #include "ur_dashboard_msgs/RobotMode.h"
 #include "ur_dashboard_msgs/SafetyMode.h"
+#include <std_srvs/Trigger.h>
 #include <tf_conversions/tf_eigen.h>
 #include <visualization_msgs/Marker.h>
 #include <jsoncpp/json/json.h>
+#include <limits>
 
 #include <limits>
 #include <cmath>
@@ -32,7 +34,11 @@
 #include "simod_rolls_detection/ur_cobot.h"
 #include "simod_rolls_detection/filters.h"
 
+#include <ima_planner/AddPackEnvMesh.h> 
+
 #define POSE_DIM 6
+
+class IMAPlanner;
 
 class SimodVisionCtrl
 {
@@ -60,10 +66,15 @@ private:
     MOVE_TO_HOMING,
     MOVE_TO_PALLET_VIEW,
     DETECT_PALLET,
-    LOAD_AND_SAVE_BOX_POSE,
+    LOAD_AND_SAVE_BOX_POSE_FROM_PALLET,  
+    MOVE_TO_ROLL_PACK_VIEW,
+    DETECT_ROLL_PACKS,
+    LOAD_AND_SAVE_BOX_POSE_FROM_PACKS,    
     COMPUTE_CLOSE_VIEW,
     MOVE_TO_CLOSE_VIEW,
     DETECT_CLOSE_LINE,
+    MOVE_TO_INSERT_START,
+    PADDLE_INSERTION,
     RETURN_HOMING_AND_DONE,
     DONE
   };
@@ -126,29 +137,57 @@ private:
                                const std::string &robot_id,
                                Eigen::Matrix<double, 6, 1> &homing_world,
                                Eigen::Matrix<double, 6, 1> &pallet_view_world,
+                               Eigen::Matrix<double, 6, 1> &roll_pack_view_world,
                                Eigen::Matrix<double, 6, 1> &close_view_box);
 
   Eigen::Affine3d applyBoxOffset(const Eigen::Affine3d &T_0_box,
                                  const Eigen::Matrix<double, 6, 1> &off);
+                                 
+  geometry_msgs::Pose eigenAffineToPose(const Eigen::Affine3d& T);
 
   static Eigen::Affine3d vec6ToAffineRPY(const Eigen::Matrix<double, 6, 1> &v);
   Json::Value affineToJson(const Eigen::Affine3d &, const std::string &);
 
   bool loadBoxPoseFromFile(const std::string &path, Eigen::Affine3d &T);
   bool loadJsonFromFile(const std::string &path, Json::Value &root);
+  bool loadBoxPoseFromPacksFile(const std::string &path, Eigen::Affine3d &T);
   bool savePoseJson(const Json::Value &j, const std::string &path);
   bool callTrigger(const std::string &srv_name);
 
-  // Pose e offset
 
-  Eigen::Affine3d T_0_homing_, T_0_pallet_view_, T_0_close_view_, T_0_box_;
-  Eigen::Matrix<double, 6, 1> homing_world_, pallet_view_world_, close_view_box_;
+  // Pose e offset
+  Eigen::Affine3d T_0_homing_, T_0_pallet_view_, T_0_roll_pack_view_, T_0_close_view_, T_0_box_;
+  Eigen::Matrix<double, 6, 1> homing_world_, pallet_view_world_, roll_pack_view_world_, close_view_box_;
 
   // frame e path
   std::string world_frame_id_, tf_base_frame_, camera_frame_id_;
-  std::string vision_views_json_, box_pose_json_path_, line_json_save_path_;
-  std::string pallet_detect_srv_, closeline_detect_srv_;
+  std::string vision_views_json_, box_pose_json_path_, roll_packs_json_path_, line_json_save_path_;
+  std::string pallet_detect_srv_, rollpacks_detect_srv_, closeline_detect_srv_;
   std::string output_dir_, box_pose_out_file_, close_line_out_file_;
-};
+
+  bool enable_pallet_detection_{false};
+  // ---- Mesh / packs options (used by publishPackCollisionMesh) ----
+  bool        enable_pack_collision_mesh_{false};
+  std::string scenario_{"s1"};
+  int         pack_id_{1};
+  std::string pack_mesh_root_{"files/input"};
+  double      pack_mesh_scale_{0.001};
+  bool        pack_mesh_use_box_pose_{true};
+
+  // Declare the helper used in .cpp
+  void publishPackCollisionMesh(const Eigen::Affine3d& T_world_mesh);
+  ros::Publisher debug_mesh_marker_pub_;   
+  
+  ros::ServiceClient add_pack_client_;
+  std::string add_pack_srv_name_; 
+
+  // --- paddle insertion test ---
+  bool enable_paddle_insertion_test_{false};
+  double paddle_contact_N_{8.0}, paddle_speed_{0.005}, paddle_max_dist_{0.20};
+  Eigen::Matrix<double, 6, 1> paddle_insert_off_6_;
+  Eigen::Affine3d T_0_insert_start_;
+
+
+  };
 
 #endif /* SIMOD_VISION_CTRL_H */

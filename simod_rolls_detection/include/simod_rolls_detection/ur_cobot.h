@@ -14,6 +14,7 @@
 #include "simod_rolls_detection/utils_rot.h"
 #include "ima_planner/DesiredTcpPose.h"
 #include "ima_planner/DesiredJointsAngles.h"
+#include "ima_planner/DesiredTcpVel.h"
 
 enum ControlMode : uint
 {
@@ -26,6 +27,10 @@ enum class ActionState
 {
     MOVE_TO_TARGET,
     WAIT_TARGET,
+    START_INSERTION,
+    WAIT_INSERTION,
+    START_DETACH,
+    WAIT_DETACH,
     DONE
 };
 
@@ -70,7 +75,10 @@ public:
     void initPlanning();
     bool movep(Eigen::Affine3d pose_E_in_0);
     bool movej(const Vector6d &q, bool reverse);
-   
+    bool movev(const Eigen::Vector3d &axis, double vel,
+               const std::string &frame,
+               double until_dist, double until_contact,
+               double retract);
     Eigen::Affine3d to0Frame(Eigen::Affine3d pose_in_B);
     // void updateCurrentPose(const Eigen::Affine3d z_E);
     bool isAtTarget(const Eigen::Affine3d pose_E_in_0, double tol);
@@ -78,7 +86,11 @@ public:
     bool waitUntilReached(const Eigen::Affine3d &target_pose_in_0, double tol, double timeout_sec);
 
     bool reachPose(const Eigen::Affine3d &target, double tol = 0.01);
-
+    // Esegue la paddle insertion: porta il TCP in pre-inserzione e poi spinge lungo -Z_tcp
+    void paddleInsertion(double contact_N,
+                                double speed,
+                                double max_dist);
+    void detachment(double distance);
     // Kinematics
     void readJointVelLimits();
     void readKinParams();
@@ -133,6 +145,8 @@ private:
     ros::ServiceClient switch_controller_client;
     ima_planner::DesiredTcpPose movep_srv;
     ima_planner::DesiredJointsAngles movej_srv;
+    ima_planner::DesiredTcpVel movev_srv;
+    ros::ServiceClient desired_tcp_vel_client;
    
     // TF
     tf::TransformListener tf_listener_;
@@ -167,6 +181,10 @@ private:
     // Control
     AdmittanceParams admittance_params{};
     AdmittanceParams external_admittance_params{};
+
+    Eigen::Affine3d target_approach_pose;
+    Eigen::Affine3d target_insertion_pose;
+    Eigen::Affine3d target_detach_pose;
 
 };
 
