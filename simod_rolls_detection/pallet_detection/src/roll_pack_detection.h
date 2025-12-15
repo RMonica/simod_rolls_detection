@@ -112,6 +112,8 @@ class PackDetection
     double height = 0.0f, width = 0.0f, depth = 0.0f;
     double detected_left_width = 1.0f;
     double detected_right_width = 1.0f;
+    uint64 reference_id = uint64(-1);
+    bool is_upside_down = false;
   };
   typedef std::vector<DetectedPack> DetectedPackVector;
 
@@ -143,6 +145,8 @@ class PackDetection
     double detected_left_width = 1.0f;
     double detected_right_width = 1.0f;
     bool valid = false;
+    uint64 reference_id = uint64(-1);
+    bool is_upside_down = false;
   };
 
   struct ReferencePoint
@@ -170,6 +174,29 @@ class PackDetection
   };
   typedef std::shared_ptr<ReferencePoints> ReferencePointsPtr;
 
+  struct ReferenceImage
+  {
+    cv::Mat reference_image;  // bgr8
+    cv::Mat reference_mask;   // uint8, boolean
+    ReferencePoints reference_points;
+  };
+  typedef std::vector<ReferenceImage> ReferenceImageVector;
+
+  struct ReferenceImageFeatures
+  {
+    cv::Mat reference_grayscale;
+    std::vector<cv::KeyPoint> keypoints_reference;
+    cv::Mat descriptors_reference;
+    ReferencePoints reference_points;
+
+    std::vector<cv::DMatch> matches;
+    FloatVector matches_score;
+    BoolVectorVector matches_compatibility;
+    Uint64VectorVector matches_comp_graph;
+    FloatVectorVector matches_scale;
+  };
+  typedef std::vector<ReferenceImageFeatures> ReferenceImageFeaturesVector;
+
   static ReferencePointsPtr LoadReferencePoints(const std::string & filename, LogFunction & log);
 
   HomographyArray CVHomographyToArray(const cv::Mat & h);
@@ -196,14 +223,10 @@ class PackDetection
                                                    const RansacFindHomographyResult & initial_guess,
                                                    const float best_score_in);
 
-  RansacFindHomographyResult RansacFindHomography(const cv::Mat & reference_image, const cv::Mat & image,
-                                                  const std::vector<cv::KeyPoint> & keypoint_reference,
+  RansacFindHomographyResult RansacFindHomography(const cv::Mat & image,
+                                                  const cv::Mat & image_mask,
                                                   const std::vector<cv::KeyPoint> & keypoint_image,
-                                                  const std::vector<cv::DMatch> & matches,
-                                                  const FloatVector & matches_score,
-                                                  const BoolVectorVector & matches_compatibility,
-                                                  const Uint64VectorVector & matches_comp_graph,
-                                                  const FloatVectorVector & matches_scale);
+                                                  ReferenceImageFeaturesVector & reference_image_features_vector);
 
   void PrintModel(const RollPackDetectionModel & model);
 
@@ -213,10 +236,9 @@ class PackDetection
                                 const Intrinsics & intrinsics, const Eigen::Affine3f & camera_pose);
 
   DetectedPackVector FindMultipleObjects(const cv::Mat & image, const cv::Mat & depth_image_in,
-                                         const cv::Mat & reference, const cv::Mat & reference_mask,
+                                         const ReferenceImageVector & reference_images,
                                          const Intrinsics & intrinsics,
-                                         const Eigen::Affine3f & camera_pose_in,
-                                         const ReferencePoints & reference_points);
+                                         const Eigen::Affine3f & camera_pose_in);
 
   RansacFindHomographyResult FindObjectPose(const cv::Mat & image_grayscale, const cv::Mat & depth_image,
                                             const cv::Mat & reference_image,
@@ -226,15 +248,13 @@ class PackDetection
                                             const ReferencePoints & reference_points);
 
   RansacFindHomographyResult FindObject(const cv::Mat & image_grayscale, const cv::Mat & depth_image,
+                                        const cv::Mat & image_mask,
                                         const std::vector<cv::KeyPoint> & keypoints_image,
                                         const cv::Mat & descriptors_image,
                                         const BoolVector & valid_keypoints_image,
-                                        const cv::Mat & reference_grayscale,
-                                        const std::vector<cv::KeyPoint> & keypoints_reference,
-                                        const cv::Mat & descriptors_reference,
+                                        ReferenceImageFeaturesVector & reference_image_features_vector,
                                         const Intrinsics & intrinsics,
-                                        const Eigen::Affine3f & camera_pose,
-                                        const ReferencePoints & reference_points);
+                                        const Eigen::Affine3f & camera_pose);
 
   float ComputeMatchSpreadScore(const float min_match_element, const float max_match_element) const;
 
