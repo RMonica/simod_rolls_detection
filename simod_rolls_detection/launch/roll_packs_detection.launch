@@ -10,7 +10,7 @@
     <param name="camera_info_topic" type="string" value="/oak/stereo/camera_info" />
     <param name="detect_packs_action" type="string" value="/detect_packs_action" />
     <param name="discard_first_camera_frames" type="int" value="50" />
-    <param name="ransac_iterations" type="int" value="200000" />
+    <param name="ransac_iterations" type="int" value="400000" />
     <param name="no_depth" type="bool" value="false" />
     <param name="world_frame_id" type="string" value="plate_center" />
     <param name="camera_frame_id" type="string" value="arm2_camera_oak_d_pro" />

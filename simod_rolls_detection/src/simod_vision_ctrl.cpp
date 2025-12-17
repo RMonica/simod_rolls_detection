@@ -379,9 +379,9 @@ void SimodVisionCtrl::spinner()
     ROS_INFO("[simod_vision_ctrl] selected plate_center point: (%.3f, %.3f, %.3f), |y|=%.3f",
              best_pt_pc.x(), best_pt_pc.y(), best_pt_pc.z(), best_abs_y);
 
-    // Salva SOLO il punto selezionato, dichiarando esplicitamente il frame "plate_center"
+    // Salva SOLO il punto selezionato, nel frame "plate_center"
     Json::Value jout;
-    jout["frame_id"] = "plate_center"; // <<— niente TF, frame locale
+    jout["frame_id"] = "plate_center"; 
     jout["point"]["x"] = best_pt_pc.x();
     jout["point"]["y"] = best_pt_pc.y();
     jout["point"]["z"] = best_pt_pc.z();

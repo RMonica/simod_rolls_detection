@@ -11,7 +11,7 @@
   <arg name="pack_id" default="1" />
   <arg name="pack_mesh_scale" default="0.001" /> 
 
-  <arg name="enable_paddle_insertion_test" default="true" />
+  <arg name="enable_paddle_insertion_test" default="false" />
   
   <rosparam param="simod_vision_ctrl/paddle_insertion_offset">
       [0.0, 0.090, 0.260, -3.1416, 0.0, 0.0]
@@ -35,6 +35,14 @@
     default="$(find simod_rolls_detection)/data/sollevamento_pacchi_reference2_mask.png" />
   <arg name="ref_desc"
     default="$(find simod_rolls_detection)/data/sollevamento_pacchi_reference2_points.txt" />
+
+  <arg name="ref_image_1"
+    default="$(find simod_rolls_detection)/data/sollevamento_pacchi_reference4.png" />
+  <arg name="ref_mask_1"
+    default="$(find simod_rolls_detection)/data/sollevamento_pacchi_reference4_mask.png" />
+  <arg name="ref_desc_1"
+    default="$(find simod_rolls_detection)/data/sollevamento_pacchi_reference4_points.txt" />
+  
   <arg name="flip_image" default="true" />
 
   <param name="simod_vision_ctrl/enable_pack_collision_mesh" value="$(arg enable_pack_collision_mesh)" />
@@ -109,13 +117,18 @@
     <param name="roll_packs_json_path" type="string" value="$(arg output_dir)/roll_packs.json" />
 
     <param name="discard_first_camera_frames" type="int" value="5" />
-    <param name="ransac_iterations" type="int" value="200000" />
+    <param name="ransac_iterations" type="int" value="400000" />
     <param name="no_depth" type="bool" value="false" />
 
     <!-- Reference assets -->
     <param name="reference_image_filename" type="string" value="$(arg ref_image)" />
     <param name="reference_mask_filename" type="string" value="$(arg ref_mask)" />
     <param name="reference_description_filename" type="string" value="$(arg ref_desc)" />
+
+    <param name="reference_image_filename_1" type="string" value="$(arg ref_image_1)" />
+    <param name="reference_mask_filename_1" type="string" value="$(arg ref_mask_1)" />
+    <param name="reference_description_filename_1" type="string" value="$(arg ref_desc_1)" />
+
     <param name="flip_image" type="bool" value="$(arg flip_image)" />
   </node>
 
@@ -178,19 +191,14 @@
 
     <param name="enable_pallet_detection" value="$(arg enable_pallet_detection)" />
 
-    <!-- enable the insertion test -->
+    <!-- enable insertion test -->
     <param name="enable_paddle_insertion_test" value="$(arg enable_paddle_insertion_test)"/>
    
     
   
   </node>
 
-  <!-- parent child rate -->
   <node pkg="tf2_ros" type="static_transform_publisher" name="oak_to_arm2_cam"
         args="0 0 0 0 0 0 arm2_camera_oak_d_pro oak" />
-  <!-- If your MoveIt planning frame is agv_footprint, tie it to plate_center -->
-  <!-- <node pkg="tf2_ros" type="static_transform_publisher" name="agv_to_plate"
-          args="0 0 0 0 0 0 agv_footprint plate_center"/> -->
-
 
 </launch>  

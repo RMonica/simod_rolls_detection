@@ -295,7 +295,7 @@ class PacksDetectionNode
 
   bool onDetectPacksSrv(std_srvs::Trigger::Request&, std_srvs::Trigger::Response& res)
   {
-    // 1) Wait for inputs (like Run)
+    // 1) Wait for inputs 
     cv::Mat rgb_image, depth_image;
     std::shared_ptr<PackDetection::Intrinsics> camera_info;
     ROS_INFO("roll_pack_detection_node: Trigger start.");
@@ -339,45 +339,78 @@ class PacksDetectionNode
       return true;
     }
 
-    // 3) Reference files + flip flag from params
-    std::string ref_img, ref_mask, ref_desc;
+    // 3) Build reference_images vector from params (list or numbered)
     bool flip_image = false;
-    if (!m_nodeptr->getParam("reference_image_filename", ref_img) ||
-        !m_nodeptr->getParam("reference_description_filename", ref_desc))
-    {
-      res.success = false;
-      res.message = "Missing params: reference_image_filename/reference_description_filename";
-      return true;
-    }
-    m_nodeptr->param<std::string>("reference_mask_filename", ref_mask, std::string(""));
     m_nodeptr->param<bool>("flip_image", flip_image, false);
 
-    cv::Mat reference_image = cv::imread(ref_img);
-    if (!reference_image.data)
+    PackDetection::ReferenceImageVector reference_images;
+
+    XmlRpc::XmlRpcValue ref_list;
+    if (m_nodeptr->getParam("references", ref_list) &&
+        ref_list.getType() == XmlRpc::XmlRpcValue::TypeArray)
     {
-      res.success = false;
-      res.message = "Cannot read reference_image_filename: " + ref_img;
-      return true;
-    }
-    cv::Mat reference_mask;
-    if (!ref_mask.empty())
-    {
-      reference_mask = cv::imread(ref_mask);
-      if (!reference_mask.data)
+      for (int i = 0; i < ref_list.size(); ++i)
       {
-        res.success = false;
-        res.message = "Cannot read reference_mask_filename: " + ref_mask;
-        return true;
+        const auto& item = ref_list[i];
+        if (!item.hasMember("image") || !item.hasMember("desc")) continue;
+
+        const std::string img  = static_cast<std::string>(item["image"]);
+        const std::string desc = static_cast<std::string>(item["desc"]);
+        const std::string mask = item.hasMember("mask") ? static_cast<std::string>(item["mask"]) : "";
+
+        cv::Mat reference_image = cv::imread(img);
+        if (!reference_image.data) { ROS_ERROR("Cannot read ref image: %s", img.c_str()); continue; }
+
+        cv::Mat reference_mask;
+        if (!mask.empty()) {
+          reference_mask = cv::imread(mask, cv::IMREAD_GRAYSCALE);
+          if (!reference_mask.data) { ROS_WARN("Cannot read mask: %s (ignored)", mask.c_str()); reference_mask.release(); }
+        }
+
+        auto reference_points = PackDetection::LoadReferencePoints(desc, m_log);
+        if (!reference_points) { ROS_ERROR("Cannot read ref desc: %s", desc.c_str()); continue; }
+
+        PackDetection::ReferenceImage ri;
+        ri.reference_image  = reference_image;
+        ri.reference_mask   = reference_mask;
+        ri.reference_points = *reference_points;
+        reference_images.push_back(ri);
       }
     }
-    auto reference_points = PackDetection::LoadReferencePoints(ref_desc, m_log);
-    if (!reference_points)
+     
+    // Se refernces è vuoto, uso altra convezione di nome reference_*
+    if (reference_images.empty())
     {
-      res.success = false;
-      res.message = "Cannot read reference_description_filename: " + ref_desc;
-      return true;
-    }
+      int idx = 0;
+      for (;; ++idx)
+      {
+        const std::string sfx = (idx == 0) ? "" : "_" + std::to_string(idx);
+        std::string img, desc, mask;
+        if (!m_nodeptr->getParam("reference_image_filename" + sfx, img)) break;
+        if (!m_nodeptr->getParam("reference_description_filename" + sfx, desc)) {
+          ROS_ERROR("Missing reference_description_filename%s", sfx.c_str()); break;
+        }
+        m_nodeptr->param<std::string>("reference_mask_filename" + sfx, mask, std::string(""));
 
+        cv::Mat reference_image = cv::imread(img);
+        if (!reference_image.data) { ROS_ERROR("Cannot read ref image: %s", img.c_str()); continue; }
+
+        cv::Mat reference_mask;
+        if (!mask.empty()) {
+          reference_mask = cv::imread(mask, cv::IMREAD_GRAYSCALE);
+          if (!reference_mask.data) { ROS_WARN("Cannot read mask: %s (ignored)", mask.c_str()); reference_mask.release(); }
+        }
+
+        auto reference_points = PackDetection::LoadReferencePoints(desc, m_log);
+        if (!reference_points) { ROS_ERROR("Cannot read ref desc: %s", desc.c_str()); continue; }
+
+        PackDetection::ReferenceImage ri;
+        ri.reference_image  = reference_image;
+        ri.reference_mask   = reference_mask;
+        ri.reference_points = *reference_points;
+        reference_images.push_back(ri);
+      }
+    }
     // 4) Config from params (use same names as in node)
     PackDetection::Config config;
     m_nodeptr->param<float>("max_valid_depth", config.max_valid_depth, config.max_valid_depth);
@@ -410,14 +443,13 @@ class PacksDetectionNode
                       [this](const std::string& name, const PointXYZRGBCloud& cloud){ this->PublishCloud(cloud, name); },
                       rand());
 
-    auto detected = rpd.FindMultipleObjects(
-        rgb_image, depth_image, reference_image, reference_mask,
-        *camera_info, camera_pose.cast<float>(), *reference_points);
+    auto detected = rpd.FindMultipleObjects(rgb_image, depth_image, reference_images,
+      *camera_info, camera_pose.cast<float>());
 
     const bool ok = !detected.empty();
     ROS_INFO_STREAM("roll_pack_detection_node: detected packs: " << detected.size());
 
-    // --- Save JSON if we found something (MINIMAL: only center/right/left with RPY) ---
+    // --- Save JSON if we found something  ---
     if (ok)
     {
       auto PoseToJsonRPY = [](const Eigen::Affine3d& T) {
