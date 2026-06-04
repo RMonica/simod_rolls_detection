@@ -8,6 +8,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/common/transforms.h>
+#include <pcl/features/feature.h>
 
 // STL
 #include <fstream>
@@ -159,6 +160,22 @@ PackDetection::HomographyArray PackDetection::CVHomographyToArray(const cv::Mat 
   return ih;
 }
 
+inline
+Eigen::Vector2d CVPoint2fToVector2d(const cv::Point2f & pt)
+{
+  return Eigen::Vector2d(pt.x, pt.y);
+}
+
+inline
+  PackDetection::Vector2dVector CVPoint2fToVector2dVector(const PackDetection::Point2fVector & ptv)
+{
+  PackDetection::Vector2dVector result;
+  result.reserve(ptv.size());
+  for (const cv::Point2f & pt : ptv)
+    result.push_back(CVPoint2fToVector2d(pt));
+  return result;
+}
+
 PackDetection::RollPackDetectionModelPtr PackDetection::EstimateModelMinSq(const double reference_size_x, const double reference_size_y,
                                              const Vector2dVector & reference_points,
                                              const Vector2dVector & observed_points,
@@ -252,7 +269,7 @@ PackDetection::RollPackDetectionModelPtr PackDetection::EstimateModelMinSq(const
 }
 
 float PackDetection::ComputeDeformationScore(const float image_width, const float image_height,
-                              const RollPackDetectionModel model)
+                              const RollPackDetectionModel & model)
 {
   // if width is increased:
   const double max_acceptable_deformation_x =  (double(image_width) / ESTIMATOR_COUNT) / 2.0;
@@ -284,7 +301,7 @@ float PackDetection::FindConsensus(const double image_width, const double image_
                                    const Vector2dVector & reference_points, const Vector2dVector & observed_points,
                                    const FloatVector & cons_matches_score,
                                    double reproj_threshold,
-                                   const RollPackDetectionModel model, Uint64Vector & consensus)
+                                   const RollPackDetectionModel & model, Uint64Vector & consensus)
 {
   float score = 0.0f;
   int min_match_element = 0, max_match_element = 0;
@@ -323,7 +340,62 @@ float PackDetection::ComputeMatchSpreadScore(const float min_match_element, cons
   return match_spread_score;
 }
 
+float PackDetection::ComputeValidPointRatio(const cv::Mat & reference_grayscale, const cv::Mat & image_mask,
+                                            const RollPackDetectionModel & model)
+{
+  // check that border is within image mask
+  const Eigen::Vector3d pts_to_check[4] = {Eigen::Vector3d(0.0, 0.0, 1.0),
+                                           Eigen::Vector3d(reference_grayscale.cols, 0.0, 1.0),
+                                           Eigen::Vector3d(0.0, reference_grayscale.rows, 1.0),
+                                           Eigen::Vector3d(reference_grayscale.cols, reference_grayscale.rows, 1.0)};
+
+  bool valid = true;
+  for (uint64 i = 0; i < 4 && valid; i++)
+  {
+    const int element_n = model.PointToElementN(reference_grayscale.cols, reference_grayscale.rows,
+                                                pts_to_check[i].x(), pts_to_check[i].y());
+    double nx, ny;
+    model.ApplyToPoint(element_n, pts_to_check[i].x(), pts_to_check[i].y(), nx, ny);
+
+    if (nx < 0.0f || nx >= image_mask.cols || ny < 0.0f || ny >= image_mask.rows)
+      valid = false;
+  }
+  if (!valid)
+    return 0.0f;
+
+  // check that all internal points are within image mask
+  uint64 counter = 0;
+  constexpr uint64 COUNT_X = ESTIMATOR_COUNT * 5;
+  constexpr uint64 COUNT_Y = 10;
+  const uint64 count_total = COUNT_X * COUNT_Y;
+  for (uint64 y = 0; y < COUNT_Y; y++)
+    for (uint64 x = 0; x < COUNT_X; x++)
+    {
+      Eigen::Vector3d internal_pt_to_check = Eigen::Vector3d((x + 0.5) * reference_grayscale.cols / COUNT_X,
+                                                             (y + 0.5) * reference_grayscale.rows / COUNT_Y, 1.0);
+
+      const int element_n = model.PointToElementN(reference_grayscale.cols, reference_grayscale.rows,
+                                                  internal_pt_to_check.x(), internal_pt_to_check.y());
+      double nx, ny;
+      model.ApplyToPoint(element_n, internal_pt_to_check.x(), internal_pt_to_check.y(), nx, ny);
+
+      const int rx = int(std::round(nx));
+      const int ry = int(std::round(ny));
+
+      if (rx < 0.0f || rx >= image_mask.cols || ry < 0.0f || ry >= image_mask.rows)
+        continue;
+
+      if (!image_mask.at<uint8>(ry, rx))
+        continue;
+
+      counter++;
+    }
+
+  return float(counter) / float(count_total);
+}
+
 PackDetection::RansacFindHomographyResult PackDetection::RansacFindDeformModel(const cv::Mat & reference_image, const cv::Mat & image,
+                                                                               const cv::Mat & image_mask,
                                                  const std::vector<cv::KeyPoint> & keypoint_reference,
                                                  const std::vector<cv::KeyPoint> & keypoint_image,
                                                  const std::vector<cv::DMatch> & matches,
@@ -383,37 +455,53 @@ PackDetection::RansacFindHomographyResult PackDetection::RansacFindDeformModel(c
       initial_observed_points[i] = observed_points[idx];
     }
 
-    RollPackDetectionModelPtr closed_model_ptr = EstimateModelMinSq(reference_image.cols, reference_image.rows,
-                                                                    initial_reference_points, initial_observed_points,
-                                                                    m_config.translation_px_weight_x, m_config.translation_px_weight_y);
-    if (!closed_model_ptr)
-    {
-      continue;
-    }
+    #define USE_CLOSED_LINEAR_MODEL 1
 
-    float score_approx;
+    #if USE_CLOSED_LINEAR_MODEL
+    RollPackDetectionModelPtr closed_model_ptr;
     {
-      Uint64Vector consensus;
-      score_approx = FindConsensus(reference_image.cols, reference_image.rows, reference_points,
-                                   observed_points, cons_matches_score, REPROJ_CLOSED_FORM_THRESHOLD, *closed_model_ptr, consensus);
-    }
-    score_approx *= ComputeDeformationScore(reference_image.cols, reference_image.rows, *closed_model_ptr);
+      closed_model_ptr = EstimateModelMinSq(reference_image.cols, reference_image.rows,
+                                            initial_reference_points, initial_observed_points,
+                                            m_config.translation_px_weight_x, m_config.translation_px_weight_y);
+      if (!closed_model_ptr)
+      {
+        continue;
+      }
 
-    if (score_approx <= best_score)
-    {
-      continue;
-    }
+      const float valid_point_ratio = ComputeValidPointRatio(reference_image, image_mask, *closed_model_ptr);
+      if (valid_point_ratio < m_config.mask_min_valid_points_ratio)
+        continue;
 
-    // const HomographyArray ih = CVHomographyToArray(result.initial_homography);
+      float score_approx;
+      {
+        Uint64Vector consensus;
+        score_approx = FindConsensus(reference_image.cols, reference_image.rows, reference_points,
+                                     observed_points, cons_matches_score, REPROJ_CLOSED_FORM_THRESHOLD, *closed_model_ptr, consensus);
+      }
+      score_approx *= ComputeDeformationScore(reference_image.cols, reference_image.rows, *closed_model_ptr);
+
+      if (score_approx <= best_score)
+      {
+        continue;
+      }
+    }
+    const RollPackDetectionModel & ih = *closed_model_ptr;
+    #else
+    const HomographyArray ih = CVHomographyToArray(result.initial_homography);
+    #endif
 
     // estimate model
     double model_final_cost;
-    RollPackDetectionModelPtr model_ptr = estimator.Estimate(*closed_model_ptr, initial_reference_points,
+    RollPackDetectionModelPtr model_ptr = estimator.Estimate(ih, initial_reference_points,
                                                              initial_observed_points, model_final_cost);
     if (!model_ptr || std::isnan(model_final_cost))
     {
       continue;
     }
+
+    const float valid_point_ratio = ComputeValidPointRatio(reference_image, image_mask, *closed_model_ptr);
+    if (valid_point_ratio < m_config.mask_min_valid_points_ratio)
+      continue;
 
     // find consensus
     float score = 0.0f;
@@ -769,7 +857,7 @@ PackDetection::RansacFindHomographyResult PackDetection::RansacFindHomography(co
         rhfr.homography = cv::findHomography(obj, scene);
     }
 
-    rhfr = RansacFindDeformModel(reference_grayscale, image,
+    rhfr = RansacFindDeformModel(reference_grayscale, image, image_mask,
                                  keypoint_reference, keypoint_image,
                                  matches, matches_score, rhfr, result.detection_model_score);
 
@@ -837,7 +925,7 @@ void PackDetection::PrintModel(const RansacFindHomographyResult & rfhr)
 }
 
 PackDetection::PointXYZRGBCloud PackDetection::ImageToCloud(const cv::Mat & rgb_image, const cv::Mat & depth_image,
-                              const Intrinsics & intrinsics, const Eigen::Affine3f & camera_pose)
+                              const Intrinsics & intrinsics, const Eigen::Affine3f & camera_pose) const
 {
   const int width = rgb_image.cols;
   const int height = rgb_image.rows;
@@ -930,6 +1018,144 @@ void PackDetection::ExtractFeaturesOrientationInvariant(int nfeatures,
   }
 }
 
+void PackDetection::ComputeReferencePoints(const RansacFindHomographyResult & r,
+                                           const ReferenceImageFeatures & rif,
+                                           Vector2dVector & reference_points_homography,
+                                           Vector2dVector & reference_points)
+{
+  std::vector<cv::Point2f> obj_centers;
+  for (const std::pair<std::string, ReferencePoint> c : rif.reference_points.pts)
+  {
+    const cv::Point2f & pt = c.second.reference;
+    obj_centers.push_back(pt);
+  }
+  std::vector<cv::Point2f> scene_h_centers(ESTIMATOR_COUNT);
+  std::vector<cv::Point2f> scene_centers(ESTIMATOR_COUNT);
+
+  try
+  {
+    cv::perspectiveTransform(obj_centers, scene_h_centers, r.homography);
+    reference_points_homography = CVPoint2fToVector2dVector(scene_h_centers);
+  }
+  catch (cv::Exception & e)
+  {
+    m_log(3, "Exception in cv::perspectiveTransform: 00 " + std::string(e.what()));
+  }
+
+  const double max_error_for_huber_loss = m_config.max_error_for_huber_loss;
+  const Eigen::Vector2d translation_px_weight(m_config.translation_px_weight_x, m_config.translation_px_weight_y);
+  MyRollPackDetectionEstimator estimator(rif.reference_grayscale.cols, rif.reference_grayscale.rows,
+                                         max_error_for_huber_loss, translation_px_weight);
+  for (uint64 i = 0; i < obj_centers.size(); i++)
+  {
+    const cv::Point2f & pt = obj_centers[i];
+    const int element_n = estimator.PointToElementN(pt.x, pt.y);
+    double nx, ny;
+    r.detection_model.ApplyToPoint(element_n, pt.x, pt.y, nx, ny);
+    scene_centers[i] = cv::Point2f(nx, ny);
+  }
+  reference_points = CVPoint2fToVector2dVector(scene_centers);
+}
+
+cv::Mat PackDetection::ComputeImageMask(const cv::Mat & image,
+                                        const cv::Mat & image_grayscale,
+                                        const cv::Mat & depth_image,
+                                        const Intrinsics & intrinsics,
+                                        const Eigen::Affine3f & camera_pose) const
+{
+  cv::Mat image_mask = image_grayscale.clone();
+  image_mask.setTo(255);
+
+  // set points to far to invalid
+  for (int y = 0; y < depth_image.rows; y++)
+    for (int x = 0; x < depth_image.cols; x++)
+      if (depth_image.at<uint16>(y, x) && ((depth_image.at<uint16>(y, x) / 1000.0f) > m_config.max_valid_depth))
+        image_mask.at<uint8>(y, x) = 0;
+
+  PointXYZRGBCloud cloud = ImageToCloud(image, depth_image, intrinsics, camera_pose);
+
+  // compute local normal and remove points where normal is vertical OR not oriented towards the camera
+  const Eigen::Vector3f vertical_vector = Eigen::Vector3f::UnitZ();
+  const Eigen::Vector3f front_vector = camera_pose.linear() * Eigen::Vector3f::UnitZ();
+  const Eigen::Vector3f left_vector = vertical_vector.cross(front_vector).normalized();
+  const int WINDOW = m_config.mask_window_size;
+  for (int y = 0; y < depth_image.rows; y++)
+    for (int x = 0; x < depth_image.cols; x++)
+    {
+      if (!depth_image.at<uint16>(y, x))
+        continue;
+
+      Eigen::Matrix3f cov = Eigen::Matrix3f::Zero();
+      Eigen::Vector3f mean = Eigen::Vector3f::Zero();
+      int counter = 0;
+      for (int dy = -WINDOW; dy <= WINDOW; dy++)
+        for (int dx = -WINDOW; dx <= WINDOW; dx++)
+        {
+          if (dx*dx + dy*dy > WINDOW*WINDOW)
+            continue;
+
+          const int nx = x + dx;
+          const int ny = y + dy;
+          if (nx < 0 || nx >= depth_image.cols)
+            continue;
+          if (ny < 0 || ny >= depth_image.rows)
+            continue;
+
+          if (!depth_image.at<uint16>(ny, nx))
+            continue;
+
+          const pcl::PointXYZRGB & pt = cloud[ny * depth_image.cols + nx];
+          const Eigen::Vector3f ept(pt.x, pt.y, pt.z);
+          cov += ept * ept.transpose();
+          mean += ept;
+          counter++;
+        }
+
+      if (counter < 3) // not enough data
+        continue;
+
+      cov = cov / counter;
+      mean = mean / counter;
+      cov -= mean * mean.transpose();
+
+      Eigen::Vector4f mean_4f = Eigen::Vector4f::Ones();
+      mean_4f.head<3>() = mean;
+
+      Eigen::Vector4f plane_parameters;
+      float curvature;
+      pcl::solvePlaneParameters(cov, mean_4f, plane_parameters, curvature);
+
+      Eigen::Vector3f normal = plane_parameters.head<3>().normalized();
+      if (std::abs(normal.dot(vertical_vector)) > std::cos(m_config.mask_min_vertical_angle) ||
+          std::abs(normal.dot(left_vector)) > std::cos(m_config.mask_min_front_angle))
+      {
+        image_mask.at<uint8>(y, x) = 0;
+        normal = Eigen::Vector3f::Zero();
+      }
+
+      if (normal.x() < 0) // consistency for visualization only
+        normal = -normal;
+      cloud[y * depth_image.cols + x].r = (normal.x() / 2 + 0.5) * 255;
+      cloud[y * depth_image.cols + x].g = (normal.y() / 2 + 0.5) * 255;
+      cloud[y * depth_image.cols + x].b = (normal.z() / 2 + 0.5) * 255;
+    }
+
+  m_publish_cloud("normal", cloud);
+
+  const int open_size = m_config.image_mask_open_size;
+  cv::Mat open_element = cv::getStructuringElement(cv::MORPH_ELLIPSE,
+                                                   cv::Size(2 * open_size + 1, 2 * open_size + 1));
+  cv::erode(image_mask, image_mask, open_element);
+  cv::dilate(image_mask, image_mask, open_element);
+
+  const int dilation_size = m_config.image_mask_dilation_size;
+  cv::Mat element = cv::getStructuringElement(cv::MORPH_ELLIPSE,
+                                              cv::Size(2 * dilation_size + 1, 2 * dilation_size + 1));
+  cv::dilate(image_mask, image_mask, element);
+
+  return image_mask;
+}
+
 PackDetection::DetectedPackVector PackDetection::FindMultipleObjects(const cv::Mat & image, const cv::Mat & depth_image_in,
                                        const ReferenceImageVector & reference_images,
                                        const Intrinsics & intrinsics,
@@ -947,26 +1173,14 @@ PackDetection::DetectedPackVector PackDetection::FindMultipleObjects(const cv::M
     depth_image.setTo(uint16(0)); // all invalid
   }
 
-  cv::Mat image_grayscale = ColorToGrayscale(image);
-  cv::Mat image_mask = image_grayscale.clone();
-  image_mask.setTo(255);
-
-  {
-    for (int y = 0; y < depth_image.rows; y++)
-      for (int x = 0; x < depth_image.cols; x++)
-        if (depth_image.at<uint16>(y, x) && ((depth_image.at<uint16>(y, x) / 1000.0f) > m_config.max_valid_depth))
-          image_mask.at<uint8>(y, x) = 0;
-
-    const int dilation_size = 5;
-    cv::Mat element = cv::getStructuringElement(cv::MORPH_ELLIPSE,
-                                                cv::Size(2 * dilation_size + 1, 2 * dilation_size+1));
-    cv::dilate(image_mask, image_mask, element);
-  }
-
   {
     const PointXYZRGBCloud cloud = ImageToCloud(image, depth_image, intrinsics, camera_pose);
     m_publish_cloud("input", cloud);
   }
+
+  cv::Mat image_grayscale = ColorToGrayscale(image);
+  m_log(1, "Computing image mask.");
+  cv::Mat image_mask = ComputeImageMask(image, image_grayscale, depth_image, intrinsics, camera_pose);
 
   if (m_config.reverse_image)
   {
@@ -995,8 +1209,15 @@ PackDetection::DetectedPackVector PackDetection::FindMultipleObjects(const cv::M
 
   std::vector<cv::KeyPoint> keypoints_image;
   cv::Mat descriptors_image;
-  ExtractFeaturesOrientationInvariant(nfeatures_image, image_grayscale, image_mask,
-                                      keypoints_image, descriptors_image);
+  {
+    cv::Mat image_mask_for_features = image_mask.clone();
+    const int dilation_size = m_config.image_mask_dilation_size_for_features;
+    cv::Mat element = cv::getStructuringElement(cv::MORPH_ELLIPSE,
+                                                cv::Size(2 * dilation_size + 1, 2 * dilation_size + 1));
+    cv::dilate(image_mask_for_features, image_mask_for_features, element);
+    ExtractFeaturesOrientationInvariant(nfeatures_image, image_grayscale, image_mask_for_features,
+                                        keypoints_image, descriptors_image);
+  }
   m_log(1, "Initial keypoints image size: " + std::to_string(keypoints_image.size()));
 
   ReferenceImageFeaturesVector reference_image_features_vector;
@@ -1098,6 +1319,10 @@ PackDetection::DetectedPackVector PackDetection::FindMultipleObjects(const cv::M
     pack.detected_right_width = r.detected_right_width;
     pack.reference_id = r.reference_id;
     pack.is_upside_down = r.is_upside_down;
+
+    const ReferenceImageFeatures & rif = reference_image_features_vector[r.reference_id];
+    ComputeReferencePoints(r, rif, pack.reference_points_homography, pack.reference_points);
+
     result.push_back(pack);
   }
 
@@ -1131,6 +1356,13 @@ PackDetection::DetectedPackVector PackDetection::FindMultipleObjects(const cv::M
       const ReferenceImageFeatures & rif = reference_image_features_vector[i];
       GrayscaleToColor(rif.reference_grayscale).copyTo(
           img_matches(cv::Rect(0, offsets[i], rif.reference_grayscale.cols, rif.reference_grayscale.rows)));
+
+      for (const std::pair<std::string, ReferencePoint> c : rif.reference_points.pts)
+      {
+        const cv::Point2f & pt = c.second.reference;
+        const cv::Point2f t = cv::Point2f(0.0f, float(offsets[i]));
+        cv::circle(img_matches, pt + t, 6, cv::Scalar(0, 0, 255), cv::FILLED, 8, 0);
+      }
     }
 
     for (const RansacFindHomographyResult & r : rfhrs)
@@ -1152,8 +1384,11 @@ PackDetection::DetectedPackVector PackDetection::FindMultipleObjects(const cv::M
     }
   }
 
-  for (const RansacFindHomographyResult & rfhr : rfhrs)
+  for (uint64 rfhr_i = 0; rfhr_i < rfhrs.size(); rfhr_i++)
   {
+    const RansacFindHomographyResult & rfhr = rfhrs[rfhr_i];
+    const DetectedPack & pack = result[rfhr_i];
+
     const ReferenceImageFeatures & rif = reference_image_features_vector[rfhr.reference_id];
     const cv::Mat & reference_grayscale = rif.reference_grayscale;
 
@@ -1173,22 +1408,14 @@ PackDetection::DetectedPackVector PackDetection::FindMultipleObjects(const cv::M
     }
     obj_corners.push_back(cv::Point2f(0, (float)reference_grayscale.rows));
     std::vector<cv::Point2f> scene_corners(obj_corners.size());
-    std::vector<cv::Point2f> scene_centers(ESTIMATOR_COUNT);
+
     try
     {
-      cv::perspectiveTransform(obj_corners, scene_corners, rfhr.homography);
+      cv::perspectiveTransform(obj_corners, scene_corners, rfhr.initial_homography);
     }
     catch (cv::Exception & e)
     {
-      m_log(3, "Exception in cv::perspectiveTransform: " + std::string(e.what()));
-      continue;
-    }
-
-    std::vector<cv::Point2f> obj_centers;
-    for (uint64 i = 0; i < ESTIMATOR_COUNT; i++)
-    {
-      obj_centers.push_back(cv::Point2f((float)reference_grayscale.cols / ESTIMATOR_COUNT * (i + 0.5f),
-                                        (float)reference_grayscale.rows / 2));
+      m_log(3, "Exception in cv::perspectiveTransform: 1 " + std::string(e.what()));
     }
 
     //-- Draw lines between the corners (the mapped object in the scene - image_2 )
@@ -1212,15 +1439,6 @@ PackDetection::DetectedPackVector PackDetection::FindMultipleObjects(const cv::M
       scene_corners[i] = cv::Point2f(nx, ny);
     }
 
-    for (uint64 i = 0; i < obj_centers.size(); i++)
-    {
-      const cv::Point2f & pt = obj_centers[i];
-      const int element_n = estimator.PointToElementN(pt.x, pt.y);
-      double nx, ny;
-      rfhr.detection_model.ApplyToPoint(element_n, pt.x, pt.y, nx, ny);
-      scene_centers[i] = cv::Point2f(nx, ny);
-    }
-
     //-- Draw lines between the corners (the mapped object in the scene - image_2 )
     for (uint64 i = 0; i < scene_corners.size(); i++)
     {
@@ -1228,10 +1446,17 @@ PackDetection::DetectedPackVector PackDetection::FindMultipleObjects(const cv::M
       cv::line(img_matches, scene_corners[i] + t,
                scene_corners[(i + 1) % scene_corners.size()] + t, cv::Scalar(255, 0, 0), 4);
     }
-    for (uint64 i = 0; i < scene_centers.size(); i++)
+    for (uint64 i = 0; i < pack.reference_points.size(); i++)
     {
       const cv::Point2f t = cv::Point2f((float)max_reference_width, 0);
-      cv::circle(img_matches, scene_centers[i] + t, 6, cv::Scalar(0, 0, 255), cv::FILLED, 8, 0);
+      const cv::Point2f pt = cv::Point2f(pack.reference_points_homography[i].x(), pack.reference_points_homography[i].y());
+      cv::circle(img_matches, pt + t, 6, cv::Scalar(0, 255, 0), cv::FILLED, 8, 0);
+    }
+    for (uint64 i = 0; i < pack.reference_points.size(); i++)
+    {
+      const cv::Point2f t = cv::Point2f((float)max_reference_width, 0);
+      const cv::Point2f pt = cv::Point2f(pack.reference_points[i].x(), pack.reference_points[i].y());
+      cv::circle(img_matches, pt + t, 6, cv::Scalar(0, 0, 255), cv::FILLED, 8, 0);
     }
   }
 

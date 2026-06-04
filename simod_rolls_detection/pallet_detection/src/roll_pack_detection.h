@@ -80,6 +80,15 @@ class PackDetection
   struct Config
   {
     float max_valid_depth = 3.0f;
+    float mask_min_vertical_angle = M_PI / 4.0f; // normals with angle smaller than this
+                                                 // with the vertical axis will be discarded
+    float mask_min_front_angle = M_PI / 8.0f;    // discards normal with angle smaller with horizontal axis
+    int mask_window_size = 3;
+    float mask_min_valid_points_ratio = 0.85f;
+
+    int image_mask_open_size = 3;
+    int image_mask_dilation_size = 5;
+    int image_mask_dilation_size_for_features = 3;
 
     uint64 nfeatures_reference = 500;
     uint64 nfeatures_image = 5000;
@@ -114,6 +123,9 @@ class PackDetection
     double detected_right_width = 1.0f;
     uint64 reference_id = uint64(-1);
     bool is_upside_down = false;
+
+    Vector2dVector reference_points;
+    Vector2dVector reference_points_homography;
   };
   typedef std::vector<DetectedPack> DetectedPackVector;
 
@@ -210,12 +222,13 @@ class PackDetection
                       const Vector2dVector & reference_points, const Vector2dVector & observed_points,
                       const FloatVector & cons_matches_score,
                       double reproj_threshold,
-                      const RollPackDetectionModel model, Uint64Vector & consensus);
+                      const RollPackDetectionModel & model, Uint64Vector & consensus);
 
   float ComputeDeformationScore(const float image_width, const float image_height,
-                                const RollPackDetectionModel model);
+                                const RollPackDetectionModel & model);
 
   RansacFindHomographyResult RansacFindDeformModel(const cv::Mat & reference_image, const cv::Mat & image,
+                                                   const cv::Mat & image_mask,
                                                    const std::vector<cv::KeyPoint> & keypoint_reference,
                                                    const std::vector<cv::KeyPoint> & keypoint_image,
                                                    const std::vector<cv::DMatch> & matches,
@@ -233,7 +246,7 @@ class PackDetection
   void PrintModel(const RansacFindHomographyResult & rfhr);
 
   PointXYZRGBCloud ImageToCloud(const cv::Mat & rgb_image, const cv::Mat & depth_image,
-                                const Intrinsics & intrinsics, const Eigen::Affine3f & camera_pose);
+                                const Intrinsics & intrinsics, const Eigen::Affine3f & camera_pose) const;
 
   DetectedPackVector FindMultipleObjects(const cv::Mat & image, const cv::Mat & depth_image_in,
                                          const ReferenceImageVector & reference_images,
@@ -258,6 +271,9 @@ class PackDetection
 
   float ComputeMatchSpreadScore(const float min_match_element, const float max_match_element) const;
 
+  float ComputeValidPointRatio(const cv::Mat & reference_grayscale, const cv::Mat & image_mask,
+                               const RollPackDetectionModel & model);
+
   void ExtractFeaturesOrientationInvariant(int nfeatures,
                                            const cv::Mat & grayscale_image,
                                            const cv::Mat & image_mask,
@@ -265,6 +281,16 @@ class PackDetection
                                            cv::Mat & descriptors);
 
   private:
+  void ComputeReferencePoints(const RansacFindHomographyResult & r,
+                              const ReferenceImageFeatures & rif,
+                              Vector2dVector & reference_points_homography,
+                              Vector2dVector & reference_points);
+  cv::Mat ComputeImageMask(const cv::Mat & image,
+                           const cv::Mat & image_grayscale,
+                           const cv::Mat & depth_image,
+                           const Intrinsics & intrinsics,
+                           const Eigen::Affine3f & camera_pose) const;
+
   std::string m_reference_image_points_filename;
 
   uint64 m_random_seed;
