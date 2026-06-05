@@ -340,8 +340,33 @@ float PackDetection::ComputeMatchSpreadScore(const float min_match_element, cons
   return match_spread_score;
 }
 
+float PackDetection::ComputeValidPointRatioModel(const cv::Mat & reference_grayscale, const cv::Mat & image_mask,
+                                                 const RollPackDetectionModel & model)
+{
+  return ComputeValidPointRatio(reference_grayscale, image_mask,
+                                [this, &model, &reference_grayscale](double x, double y, double& nx, double& ny)
+  {
+    const int element_n = model.PointToElementN(reference_grayscale.cols, reference_grayscale.rows, x, y);
+    model.ApplyToPoint(element_n, x, y, nx, ny);
+  });
+}
+
+float PackDetection::ComputeValidPointRatioHomography(const cv::Mat & reference_grayscale, const cv::Mat & image_mask,
+                                                      const Eigen::Matrix3d & homography)
+{
+  return ComputeValidPointRatio(reference_grayscale, image_mask,
+                                [this, &homography, &reference_grayscale](double x, double y, double& nx, double& ny)
+  {
+    Eigen::Vector3d pt(x, y, 1.0);
+    Eigen::Vector3d opt = homography * pt;
+    nx = opt.x() / opt.z();
+    ny = opt.y() / opt.z();
+  });
+}
+
+inline
 float PackDetection::ComputeValidPointRatio(const cv::Mat & reference_grayscale, const cv::Mat & image_mask,
-                                            const RollPackDetectionModel & model)
+                                            std::function<void(double x, double y, double& nx, double& ny)> apply_model)
 {
   // check that border is within image mask
   const Eigen::Vector3d pts_to_check[4] = {Eigen::Vector3d(0.0, 0.0, 1.0),
@@ -352,11 +377,8 @@ float PackDetection::ComputeValidPointRatio(const cv::Mat & reference_grayscale,
   bool valid = true;
   for (uint64 i = 0; i < 4 && valid; i++)
   {
-    const int element_n = model.PointToElementN(reference_grayscale.cols, reference_grayscale.rows,
-                                                pts_to_check[i].x(), pts_to_check[i].y());
     double nx, ny;
-    model.ApplyToPoint(element_n, pts_to_check[i].x(), pts_to_check[i].y(), nx, ny);
-
+    apply_model(pts_to_check[i].x(), pts_to_check[i].y(), nx, ny);
     if (nx < 0.0f || nx >= image_mask.cols || ny < 0.0f || ny >= image_mask.rows)
       valid = false;
   }
@@ -374,10 +396,8 @@ float PackDetection::ComputeValidPointRatio(const cv::Mat & reference_grayscale,
       Eigen::Vector3d internal_pt_to_check = Eigen::Vector3d((x + 0.5) * reference_grayscale.cols / COUNT_X,
                                                              (y + 0.5) * reference_grayscale.rows / COUNT_Y, 1.0);
 
-      const int element_n = model.PointToElementN(reference_grayscale.cols, reference_grayscale.rows,
-                                                  internal_pt_to_check.x(), internal_pt_to_check.y());
       double nx, ny;
-      model.ApplyToPoint(element_n, internal_pt_to_check.x(), internal_pt_to_check.y(), nx, ny);
+      apply_model(internal_pt_to_check.x(), internal_pt_to_check.y(), nx, ny);
 
       const int rx = int(std::round(nx));
       const int ry = int(std::round(ny));
@@ -468,7 +488,7 @@ PackDetection::RansacFindHomographyResult PackDetection::RansacFindDeformModel(c
         continue;
       }
 
-      const float valid_point_ratio = ComputeValidPointRatio(reference_image, image_mask, *closed_model_ptr);
+      const float valid_point_ratio = ComputeValidPointRatioModel(reference_image, image_mask, *closed_model_ptr);
       if (valid_point_ratio < m_config.mask_min_valid_points_ratio)
         continue;
 
@@ -499,7 +519,7 @@ PackDetection::RansacFindHomographyResult PackDetection::RansacFindDeformModel(c
       continue;
     }
 
-    const float valid_point_ratio = ComputeValidPointRatio(reference_image, image_mask, *closed_model_ptr);
+    const float valid_point_ratio = ComputeValidPointRatioModel(reference_image, image_mask, *closed_model_ptr);
     if (valid_point_ratio < m_config.mask_min_valid_points_ratio)
       continue;
 
@@ -735,33 +755,7 @@ PackDetection::RansacFindHomographyResult PackDetection::RansacFindHomography(co
         if (!valid)
           continue;
 
-        constexpr uint64 COUNT = ESTIMATOR_COUNT;
-        Eigen::Vector3d internal_pts_to_check[COUNT];
-        for (uint64 i = 0; i < COUNT; i++)
-        {
-          internal_pts_to_check[i] = Eigen::Vector3d((i * 0.5) * double(reference_grayscale.cols) / COUNT,
-                                                     reference_grayscale.rows / 2.0, 1.0);
-        }
-
-        // check that all internal points are within image mask
-        for (uint64 i = 0; i < COUNT && valid; i++)
-        {
-          Eigen::Vector3d p = he * internal_pts_to_check[i];
-          if (p.z() < 0.001)
-            valid = false;
-          p = p / p.z();
-          const int rx = int(std::round(p.x()));
-          const int ry = int(std::round(p.y()));
-
-          if (rx < 0.0f || rx >= image.cols || ry < 0.0f || ry >= image.rows)
-            valid = false;
-          if (!valid)
-            continue;
-
-          if (!image_mask.at<uint8>(ry, rx))
-            valid = false;
-        }
-        if (!valid)
+        if (ComputeValidPointRatioHomography(reference_grayscale, image_mask, he) < m_config.mask_min_valid_points_ratio)
           continue;
       }
 

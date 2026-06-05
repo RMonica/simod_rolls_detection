@@ -271,8 +271,10 @@ class PackDetection
 
   float ComputeMatchSpreadScore(const float min_match_element, const float max_match_element) const;
 
-  float ComputeValidPointRatio(const cv::Mat & reference_grayscale, const cv::Mat & image_mask,
-                               const RollPackDetectionModel & model);
+  float ComputeValidPointRatioModel(const cv::Mat & reference_grayscale, const cv::Mat & image_mask,
+                                    const RollPackDetectionModel & model);
+  float ComputeValidPointRatioHomography(const cv::Mat & reference_grayscale, const cv::Mat & image_mask,
+                                         const Eigen::Matrix3d & homography);
 
   void ExtractFeaturesOrientationInvariant(int nfeatures,
                                            const cv::Mat & grayscale_image,
@@ -290,6 +292,9 @@ class PackDetection
                            const cv::Mat & depth_image,
                            const Intrinsics & intrinsics,
                            const Eigen::Affine3f & camera_pose) const;
+  inline
+  float ComputeValidPointRatio(const cv::Mat & reference_grayscale, const cv::Mat & image_mask,
+                               std::function<void(double x, double y, double& nx, double& ny)> apply_model);
 
   std::string m_reference_image_points_filename;
 
